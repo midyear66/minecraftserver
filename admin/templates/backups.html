@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Backups - {{ server.name }} - MC Server Manager{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1 style="margin-bottom: 0;">Backups - {{ server.name }}</h1>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+
+{% if status == 'running' %}
+<div class="card" style="border-color: #28a745; padding: 1rem;">
+    <p style="color: #28a745; margin: 0;">
+        Server is <strong>running</strong>. Backups use save-off/save-on to avoid corruption (no downtime).
+    </p>
+</div>
+{% else %}
+<div class="card" style="border-color: #ffc107; padding: 1rem;">
+    <p style="color: #ffc107; margin: 0;">
+        Server is <strong>stopped</strong>. Backups can be created directly.
+    </p>
+</div>
+{% endif %}
+
+{% if in_progress %}
+<div class="card" style="border-color: #17a2b8; padding: 1rem;" id="progress-banner">
+    <p style="color: #17a2b8; margin: 0;">
+        Backup in progress... This page will refresh automatically.
+    </p>
+</div>
+{% endif %}
+
+<!-- Auto-Backup Settings -->
+<div class="card">
+    <h2>Auto-Backup Settings</h2>
+    <form method="POST" action="{{ url_for('backup_settings', port=server.external_port) }}">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+            <input type="checkbox" id="auto_enabled" name="auto_enabled"
+                   {% if backup_settings.get('auto_enabled') %}checked{% endif %}>
+            <label for="auto_enabled" style="margin-bottom: 0;">Enable automatic backups</label>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="interval_hours">Backup Interval</label>
+                <select id="interval_hours" name="interval_hours">
+                    {% for h in [1, 2, 4, 6, 12, 24] %}
+                    <option value="{{ h }}" {% if backup_settings.get('interval_hours', 6) == h %}selected{% endif %}>
+                        Every {{ h }} hour{{ 's' if h != 1 else '' }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="max_backups">Max Auto-Backups to Keep</label>
+                <input type="number" id="max_backups" name="max_backups"
+                       value="{{ backup_settings.get('max_backups', 5) }}"
+                       min="3" max="20">
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+    </form>
+</div>
+
+<!-- Backups List -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">Backups</h2>
+        <form method="POST" action="{{ url_for('create_backup_route', port=server.external_port) }}" class="inline-form">
+            <button type="submit" class="btn btn-success" {% if in_progress %}disabled{% endif %}>
+                {% if in_progress %}Backup In Progress...{% else %}Create Backup Now{% endif %}
+            </button>
+        </form>
+    </div>
+
+    {% if backups %}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Size</th>
+                <th>Type</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for backup in backups %}
+            <tr>
+                <td>{{ backup.timestamp }}</td>
+                <td>{{ backup.size_human }}</td>
+                <td>
+                    {% if backup.type == 'auto' %}
+                    <span class="status-badge status-running">Auto</span>
+                    {% else %}
+                    <span class="status-badge" style="background: #1a2744; color: #5b9bd5; border: 1px solid #5b9bd5;">Manual</span>
+                    {% endif %}
+                </td>
+                <td class="actions">
+                    <form method="POST"
+                          action="{{ url_for('restore_backup_route', port=server.external_port, filename=backup.filename) }}"
+                          class="inline-form"
+                          onsubmit="return confirm('Restore this backup? This will overwrite current server data.{% if status == "running" %} The server will be stopped and restarted.{% endif %}')">
+                        <button type="submit" class="btn btn-primary btn-sm">Restore</button>
+                    </form>
+                    <a href="{{ url_for('download_backup', port=server.external_port, filename=backup.filename) }}"
+                       class="btn btn-secondary btn-sm">Download</a>
+                    <form method="POST"
+                          action="{{ url_for('delete_backup_route', port=server.external_port, filename=backup.filename) }}"
+                          class="inline-form"
+                          onsubmit="return confirm('Delete this backup? This cannot be undone.')">
+                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888;">No backups yet. Create one using the button above.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    {% if in_progress %}
+    const checkInterval = setInterval(function() {
+        fetch('/api/backups/{{ server.external_port }}/status')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.in_progress) {
+                    clearInterval(checkInterval);
+                    window.location.reload();
+                }
+            })
+            .catch(err => console.error('Status check failed:', err));
+    }, 3000);
+    {% endif %}
+</script>
+{% endblock %}

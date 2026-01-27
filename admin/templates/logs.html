@@ -1,0 +1,199 @@
+{% extends 'base.html' %}
+
+{% block title %}Usage Logs - MC Server Manager{% endblock %}
+
+{% block content %}
+<h1>Usage Logs</h1>
+
+<div class="card">
+    <h2>Log File</h2>
+    <div class="log-controls">
+        <form method="get" action="{{ url_for('logs') }}" class="log-select-form">
+            <select name="file" onchange="this.form.submit()">
+                {% if not log_files %}
+                <option value="">No log files available</option>
+                {% else %}
+                {% for file in log_files %}
+                <option value="{{ file }}" {% if file == selected_file %}selected{% endif %}>{{ file }}</option>
+                {% endfor %}
+                {% endif %}
+            </select>
+        </form>
+        {% if selected_file %}
+        <a href="{{ url_for('download_log', filename=selected_file) }}" class="btn btn-secondary btn-sm">Download</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" id="events-card">
+    <h2>Events ({{ entries|length }} total)</h2>
+    <table id="events-table" {% if not entries %}style="display: none;"{% endif %}>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Player</th>
+                <th>Server</th>
+                <th>Port</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr>
+                <td>{{ entry.timestamp[:19].replace('T', ' ') }}</td>
+                <td>
+                    <span class="event-badge event-{{ entry.event }}">
+                        {% if entry.event == 'server_start' %}
+                        Start
+                        {% elif entry.event == 'server_stop' %}
+                        Stop
+                        {% elif entry.event == 'player_join' %}
+                        Join
+                        {% elif entry.event == 'player_leave' %}
+                        Leave
+                        {% else %}
+                        {{ entry.event }}
+                        {% endif %}
+                    </span>
+                </td>
+                <td>{{ entry.player_name or '-' }}</td>
+                <td>{{ entry.server_name or 'Unknown' }}</td>
+                <td>{{ entry.port }}</td>
+                <td>
+                    {% if entry.event in ['player_join', 'player_leave'] %}
+                    {{ entry.players }} player{% if entry.players != 1 %}s{% endif %} online
+                    {% elif entry.event == 'server_stop' and entry.reason %}
+                    {{ entry.reason | replace('_', ' ') | title }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p id="no-events-msg" style="color: #888; padding: 1rem 0; {% if entries %}display: none;{% endif %}">No events recorded{% if selected_file %} in this log file{% endif %}.</p>
+</div>
+
+<style>
+    .log-controls {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+    }
+
+    .log-select-form select {
+        padding: 0.5rem 1rem;
+        border: 1px solid #0f3460;
+        border-radius: 4px;
+        background: #1a1a2e;
+        color: #eee;
+        font-size: 1rem;
+        cursor: pointer;
+    }
+
+    .log-select-form select:focus {
+        outline: none;
+        border-color: #e94560;
+    }
+
+    .event-badge {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }
+
+    .event-server_start {
+        background: #0a3622;
+        color: #28a745;
+    }
+
+    .event-server_stop {
+        background: #3a0a0a;
+        color: #dc3545;
+    }
+
+    .event-player_join {
+        background: #0a2a3a;
+        color: #17a2b8;
+    }
+
+    .event-player_leave {
+        background: #3a2a0a;
+        color: #ffc107;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function formatEvent(event) {
+        const eventMap = {
+            'server_start': 'Start',
+            'server_stop': 'Stop',
+            'player_join': 'Join',
+            'player_leave': 'Leave'
+        };
+        return eventMap[event] || event;
+    }
+
+    function formatDetails(entry) {
+        if (entry.event === 'player_join' || entry.event === 'player_leave') {
+            const s = entry.players !== 1 ? 's' : '';
+            return `${entry.players} player${s} online`;
+        } else if (entry.event === 'server_stop' && entry.reason) {
+            return entry.reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        }
+        return '';
+    }
+
+    function updateLogs() {
+        const select = document.querySelector('.log-select-form select');
+        const selectedFile = select ? select.value : '';
+        const url = selectedFile ? `/api/logs?file=${encodeURIComponent(selectedFile)}` : '/api/logs';
+
+        fetch(url)
+            .then(response => response.json())
+            .then(data => {
+                const countHeader = document.querySelector('#events-card h2');
+                const table = document.getElementById('events-table');
+                const noEventsMsg = document.getElementById('no-events-msg');
+                const tbody = table ? table.querySelector('tbody') : null;
+
+                if (countHeader) {
+                    countHeader.textContent = `Events (${data.count} total)`;
+                }
+
+                if (data.entries.length > 0) {
+                    if (table) table.style.display = '';
+                    if (noEventsMsg) noEventsMsg.style.display = 'none';
+
+                    if (tbody) {
+                        tbody.innerHTML = data.entries.map(entry => `
+                            <tr>
+                                <td>${entry.timestamp.substring(0, 19).replace('T', ' ')}</td>
+                                <td>
+                                    <span class="event-badge event-${entry.event}">
+                                        ${formatEvent(entry.event)}
+                                    </span>
+                                </td>
+                                <td>${entry.player_name || '-'}</td>
+                                <td>${entry.server_name || 'Unknown'}</td>
+                                <td>${entry.port}</td>
+                                <td>${formatDetails(entry)}</td>
+                            </tr>
+                        `).join('');
+                    }
+                } else {
+                    if (table) table.style.display = 'none';
+                    if (noEventsMsg) noEventsMsg.style.display = '';
+                }
+            })
+            .catch(err => console.error('Log update failed:', err));
+    }
+
+    // Poll every 5 seconds
+    setInterval(updateLogs, 5000);
+</script>
+{% endblock %}

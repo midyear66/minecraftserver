@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - MC Server Manager{% endblock %}
+
+{% block content %}
+<h1>Server Dashboard</h1>
+
+<div class="card">
+    <h2>Servers</h2>
+
+    {% if servers %}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Port</th>
+                <th>Type</th>
+                <th>Version</th>
+                <th>Memory</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for server in servers %}
+            <tr data-port="{{ server.external_port }}">
+                <td>{{ server.name }}</td>
+                <td>{{ server.external_port }}</td>
+                <td>{{ server.type }}</td>
+                <td>{{ server.version }}</td>
+                <td>{{ server.memory }}</td>
+                <td class="status-cell">
+                    {% if server.running %}
+                    <span class="status-badge status-running">Running</span>
+                    {% else %}
+                    <span class="status-badge status-stopped">Stopped</span>
+                    {% endif %}
+                </td>
+                <td class="actions">
+                    <form method="POST" action="{{ url_for('stop_server', port=server.external_port) }}" class="inline-form action-stop" {% if not server.running %}style="display:none"{% endif %}>
+                        <button type="submit" class="btn btn-danger btn-sm">Stop</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('start_server', port=server.external_port) }}" class="inline-form action-start" {% if server.running %}style="display:none"{% endif %}>
+                        <button type="submit" class="btn btn-success btn-sm">Start</button>
+                    </form>
+                    <a href="{{ url_for('edit_server', port=server.external_port) }}" class="btn btn-secondary btn-sm">Edit</a>
+                    <a href="{{ url_for('console', port=server.external_port) }}" class="btn btn-secondary btn-sm action-console" {% if not server.running %}style="opacity: 0.5; pointer-events: none;"{% endif %}>Console</a>
+                    <a href="{{ url_for('players', port=server.external_port) }}" class="btn btn-secondary btn-sm">Players</a>
+                    <a href="{{ url_for('backups', port=server.external_port) }}" class="btn btn-secondary btn-sm">Backups</a>
+                    <form method="POST" action="{{ url_for('remove_server', port=server.external_port) }}" class="inline-form" onsubmit="return confirm('Remove server &quot;{{ server.name }}&quot;? Container will be deleted but data is preserved.')">
+                        <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888;">No servers configured. Create one below.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Create Server</h2>
+    <form method="POST" action="{{ url_for('create_server') }}" class="add-form">
+        <div class="form-group">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" placeholder="Survival" required>
+        </div>
+        <div class="form-group">
+            <label for="port">Port</label>
+            <input type="number" id="port" name="port" placeholder="25565" required min="1" max="65535">
+        </div>
+        <div class="form-group">
+            <label for="type">Type</label>
+            <select id="type" name="type">
+                {% for t in server_types %}
+                <option value="{{ t }}">{{ t }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="version">Version</label>
+            <select id="version" name="version">
+                <option value="LATEST" selected>LATEST</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="memory">Memory</label>
+            <select id="memory" name="memory">
+                <option value="1G">1G</option>
+                <option value="2G" selected>2G</option>
+                <option value="3G">3G</option>
+                <option value="4G">4G</option>
+                <option value="6G">6G</option>
+                <option value="8G">8G</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Create Server</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Proxy Settings</h2>
+    <table>
+        <tr>
+            <td style="color: #888;">Auto Shutdown</td>
+            <td>{{ 'Enabled' if config.auto_shutdown else 'Disabled' }}</td>
+        </tr>
+        <tr>
+            <td style="color: #888;">Idle Timeout</td>
+            <td>{{ config.timeout }} minutes</td>
+        </tr>
+    </table>
+    <a href="{{ url_for('settings') }}" class="btn btn-secondary" style="margin-top: 1rem;">Edit Settings</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function updateStatus() {
+        fetch('/api/status')
+            .then(response => response.json())
+            .then(servers => {
+                servers.forEach(server => {
+                    const row = document.querySelector(`tr[data-port="${server.external_port}"]`);
+                    if (!row) return;
+
+                    // Update status badge
+                    const statusCell = row.querySelector('.status-cell');
+                    if (server.running) {
+                        statusCell.innerHTML = '<span class="status-badge status-running">Running</span>';
+                    } else {
+                        statusCell.innerHTML = '<span class="status-badge status-stopped">Stopped</span>';
+                    }
+
+                    // Update action buttons
+                    const stopForm = row.querySelector('.action-stop');
+                    const startForm = row.querySelector('.action-start');
+                    if (stopForm && startForm) {
+                        stopForm.style.display = server.running ? '' : 'none';
+                        startForm.style.display = server.running ? 'none' : '';
+                    }
+
+                    // Update console button
+                    const consoleBtn = row.querySelector('.action-console');
+                    if (consoleBtn) {
+                        consoleBtn.style.opacity = server.running ? '' : '0.5';
+                        consoleBtn.style.pointerEvents = server.running ? '' : 'none';
+                    }
+                });
+            })
+            .catch(err => console.error('Status update failed:', err));
+    }
+
+    // Poll every 5 seconds
+    setInterval(updateStatus, 5000);
+
+    // Version dropdown logic
+    const typeSelect = document.getElementById('type');
+    const versionSelect = document.getElementById('version');
+
+    function loadVersions(serverType, selectedVersion) {
+        versionSelect.disabled = true;
+        versionSelect.innerHTML = '<option value="LATEST">Loading...</option>';
+
+        fetch('/api/versions/' + serverType)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to fetch versions');
+                return response.json();
+            })
+            .then(data => {
+                versionSelect.innerHTML = '';
+                data.versions.forEach(function(ver) {
+                    const option = document.createElement('option');
+                    option.value = ver;
+                    option.textContent = ver;
+                    if (ver === selectedVersion) {
+                        option.selected = true;
+                    }
+                    versionSelect.appendChild(option);
+                });
+                versionSelect.disabled = false;
+            })
+            .catch(function(err) {
+                console.error('Version fetch error:', err);
+                versionSelect.innerHTML = '<option value="LATEST" selected>LATEST</option>';
+                versionSelect.disabled = false;
+            });
+    }
+
+    if (typeSelect && versionSelect) {
+        loadVersions(typeSelect.value, 'LATEST');
+        typeSelect.addEventListener('change', function() {
+            loadVersions(this.value, 'LATEST');
+        });
+    }
+</script>
+{% endblock %}

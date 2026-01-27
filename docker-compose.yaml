@@ -1,0 +1,31 @@
+services:
+  mc_proxy:
+    build: ./proxy
+    container_name: mc_proxy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./proxy:/app/config
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  mc_admin:
+    build: ./admin
+    container_name: mc_admin
+    restart: unless-stopped
+    user: "1000:1000"
+    group_add:
+      - "117"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./proxy:/config
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./mc_data:/mc_data
+      - ./backups:/backups
+    env_file:
+      - ./.env
+    environment:
+      - HOST_DATA_DIR=${HOST_DATA_DIR}
+      - PYTHONDONTWRITEBYTECODE=1

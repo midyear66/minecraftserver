@@ -1,0 +1,34 @@
+# Environment files (contain secrets)
+.env
+
+# Proxy runtime config (contains API keys, managed via admin UI)
+proxy/config.json
+
+# Runtime data directories
+mc_data/*
+!mc_data/.gitkeep
+backups/*
+!backups/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude workspace
+.claude/

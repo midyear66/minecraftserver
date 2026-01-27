@@ -1,0 +1,35 @@
+{
+  "timeout": 5,
+  "auto_shutdown": true,
+  "servers": [],
+  "notifications": {
+    "email": {
+      "enabled": false,
+      "smtp_host": "",
+      "smtp_port": 587,
+      "smtp_tls": true,
+      "smtp_user": "",
+      "smtp_password": "",
+      "from_address": "",
+      "to_addresses": [],
+      "events": {
+        "server_start": true,
+        "server_stop": true,
+        "player_join": false,
+        "player_leave": false
+      }
+    },
+    "pushover": {
+      "enabled": false,
+      "user_key": "",
+      "app_token": "",
+      "priority": 0,
+      "events": {
+        "server_start": true,
+        "server_stop": true,
+        "player_join": false,
+        "player_leave": false
+      }
+    }
+  }
+}

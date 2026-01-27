@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ server.name }} - MC Server Manager{% endblock %}
+
+{% block content %}
+<h1>Edit Server</h1>
+
+<form method="POST">
+    <!-- Server Info (read-only) -->
+    <div class="card">
+        <h2>Server Info</h2>
+        <table>
+            <tr>
+                <td style="color: #888; width: 180px;">Container</td>
+                <td><code>{{ server.container_name }}</code></td>
+            </tr>
+            <tr>
+                <td style="color: #888;">Type</td>
+                <td>{{ server.type }}</td>
+            </tr>
+            <tr>
+                <td style="color: #888;">External Port</td>
+                <td>{{ server.external_port }}</td>
+            </tr>
+            <tr>
+                <td style="color: #888;">Internal Port</td>
+                <td>{{ server.internal_port }}</td>
+            </tr>
+            <tr>
+                <td style="color: #888;">Status</td>
+                <td>
+                    {% if status == 'running' %}
+                    <span class="status-badge status-running">Running</span>
+                    {% else %}
+                    <span class="status-badge status-stopped">{{ status | title }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Basic Settings -->
+    <div class="card">
+        <h2>Basic Settings</h2>
+        <div class="form-group">
+            <label for="name">Server Name</label>
+            <input type="text" id="name" name="name" value="{{ server.name }}" required>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="version">Minecraft Version</label>
+                <select id="version" name="version">
+                    <option value="{{ server.version }}" selected>{{ server.version }}</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="memory">Memory</label>
+                <select id="memory" name="memory">
+                    {% for m in ['1G', '2G', '3G', '4G', '6G', '8G'] %}
+                    <option value="{{ m }}" {% if server.memory == m %}selected{% endif %}>{{ m }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gameplay -->
+    <div class="card">
+        <h2>Gameplay</h2>
+        {% set env = server.get('env', {}) %}
+
+        <div class="form-group">
+            <label for="MOTD">Message of the Day (MOTD)</label>
+            <input type="text" id="MOTD" name="MOTD"
+                   value="{{ env.get('MOTD', env_defaults.MOTD) }}"
+                   placeholder="{{ env_defaults.MOTD }}">
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="MODE">Game Mode</label>
+                <select id="MODE" name="MODE">
+                    {% set current_mode = env.get('MODE', env_defaults.MODE) %}
+                    {% for mode in ['survival', 'creative', 'adventure', 'spectator'] %}
+                    <option value="{{ mode }}" {% if current_mode == mode %}selected{% endif %}>{{ mode | title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="DIFFICULTY">Difficulty</label>
+                <select id="DIFFICULTY" name="DIFFICULTY">
+                    {% set current_diff = env.get('DIFFICULTY', env_defaults.DIFFICULTY) %}
+                    {% for diff in ['peaceful', 'easy', 'normal', 'hard'] %}
+                    <option value="{{ diff }}" {% if current_diff == diff %}selected{% endif %}>{{ diff | title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="MAX_PLAYERS">Max Players</label>
+                <input type="number" id="MAX_PLAYERS" name="MAX_PLAYERS"
+                       value="{{ env.get('MAX_PLAYERS', env_defaults.MAX_PLAYERS) }}"
+                       min="1" max="1000">
+            </div>
+            <div class="form-group">
+                <label for="SPAWN_PROTECTION">Spawn Protection Radius</label>
+                <input type="number" id="SPAWN_PROTECTION" name="SPAWN_PROTECTION"
+                       value="{{ env.get('SPAWN_PROTECTION', env_defaults.SPAWN_PROTECTION) }}"
+                       min="0" max="64">
+                <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                    Set to 0 to disable spawn protection
+                </p>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="VIEW_DISTANCE">View Distance (chunks)</label>
+            <input type="number" id="VIEW_DISTANCE" name="VIEW_DISTANCE"
+                   value="{{ env.get('VIEW_DISTANCE', env_defaults.VIEW_DISTANCE) }}"
+                   min="2" max="32" style="max-width: 200px;">
+        </div>
+
+        <div class="form-group">
+            <label style="margin-bottom: 0.75rem;">Toggles</label>
+            <div class="toggles-grid">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="PVP" name="PVP"
+                           {% if env.get('PVP', env_defaults.PVP) %}checked{% endif %}>
+                    <label for="PVP" style="margin: 0;">PvP</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ONLINE_MODE" name="ONLINE_MODE"
+                           {% if env.get('ONLINE_MODE', env_defaults.ONLINE_MODE) %}checked{% endif %}>
+                    <label for="ONLINE_MODE" style="margin: 0;">Online Mode</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ALLOW_NETHER" name="ALLOW_NETHER"
+                           {% if env.get('ALLOW_NETHER', env_defaults.ALLOW_NETHER) %}checked{% endif %}>
+                    <label for="ALLOW_NETHER" style="margin: 0;">Allow Nether</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="ENABLE_COMMAND_BLOCK" name="ENABLE_COMMAND_BLOCK"
+                           {% if env.get('ENABLE_COMMAND_BLOCK', env_defaults.ENABLE_COMMAND_BLOCK) %}checked{% endif %}>
+                    <label for="ENABLE_COMMAND_BLOCK" style="margin: 0;">Command Blocks</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- World -->
+    <div class="card">
+        <h2>World</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="SEED">World Seed</label>
+                <input type="text" id="SEED" name="SEED"
+                       value="{{ env.get('SEED', env_defaults.SEED) }}"
+                       placeholder="Leave empty for random">
+                <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                    Only effective on first world generation
+                </p>
+            </div>
+            <div class="form-group">
+                <label for="LEVEL_TYPE">Level Type</label>
+                <select id="LEVEL_TYPE" name="LEVEL_TYPE">
+                    {% set current_level = env.get('LEVEL_TYPE', env_defaults.LEVEL_TYPE) %}
+                    {% for lt in ['default', 'flat', 'largeBiomes', 'amplified', 'single_biome_surface'] %}
+                    <option value="{{ lt }}" {% if current_level == lt %}selected{% endif %}>{{ lt }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="ICON">Server Icon URL</label>
+            <input type="text" id="ICON" name="ICON"
+                   value="{{ env.get('ICON', env_defaults.ICON) }}"
+                   placeholder="https://example.com/icon.png">
+            <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                URL to a 64x64 PNG image
+            </p>
+        </div>
+    </div>
+
+    <!-- Performance -->
+    <div class="card">
+        <h2>Performance</h2>
+        <div class="checkbox-group">
+            <input type="checkbox" id="USE_AIKAR_FLAGS" name="USE_AIKAR_FLAGS"
+                   {% if env.get('USE_AIKAR_FLAGS', env_defaults.USE_AIKAR_FLAGS) %}checked{% endif %}>
+            <label for="USE_AIKAR_FLAGS" style="margin: 0;">Use Aikar's GC Flags</label>
+        </div>
+        <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+            Optimized Java garbage collection flags recommended for Minecraft servers
+        </p>
+    </div>
+
+    <!-- Paper-specific -->
+    {% if server.type == 'PAPER' %}
+    <div class="card">
+        <h2>Paper Settings</h2>
+        <div class="form-group">
+            <label for="SPIGET_RESOURCES">Spiget Resources</label>
+            <input type="text" id="SPIGET_RESOURCES" name="SPIGET_RESOURCES"
+                   value="{{ env.get('SPIGET_RESOURCES', env_defaults.SPIGET_RESOURCES) }}"
+                   placeholder="1234,5678">
+            <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                Comma-separated SpigotMC resource IDs to auto-download plugins
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Warning -->
+    <div class="card" style="border-color: #ffc107;">
+        <p style="color: #ffc107; margin: 0;">
+            Changing version, memory, or any gameplay/world/performance settings will recreate
+            the container. If the server is running, it will be stopped first. World data is preserved.
+        </p>
+    </div>
+
+    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+
+<style>
+    .toggles-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+    }
+
+    @media (max-width: 600px) {
+        .toggles-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const versionSelect = document.getElementById('version');
+    const serverType = '{{ server.type }}';
+    const currentVersion = '{{ server.version }}';
+
+    function loadVersions() {
+        versionSelect.disabled = true;
+
+        fetch('/api/versions/' + serverType)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to fetch versions');
+                return response.json();
+            })
+            .then(data => {
+                versionSelect.innerHTML = '';
+                let currentFound = false;
+
+                data.versions.forEach(function(ver) {
+                    const option = document.createElement('option');
+                    option.value = ver;
+                    option.textContent = ver;
+                    if (ver === currentVersion) {
+                        option.selected = true;
+                        currentFound = true;
+                    }
+                    versionSelect.appendChild(option);
+                });
+
+                if (!currentFound && currentVersion) {
+                    const option = document.createElement('option');
+                    option.value = currentVersion;
+                    option.textContent = currentVersion + ' (current)';
+                    option.selected = true;
+                    if (versionSelect.options.length > 1) {
+                        versionSelect.insertBefore(option, versionSelect.options[1]);
+                    } else {
+                        versionSelect.appendChild(option);
+                    }
+                }
+
+                versionSelect.disabled = false;
+            })
+            .catch(function(err) {
+                console.error('Version fetch error:', err);
+                versionSelect.innerHTML = '';
+                var opt1 = document.createElement('option');
+                opt1.value = 'LATEST';
+                opt1.textContent = 'LATEST';
+                if (currentVersion === 'LATEST') opt1.selected = true;
+                versionSelect.appendChild(opt1);
+
+                if (currentVersion && currentVersion !== 'LATEST') {
+                    var opt2 = document.createElement('option');
+                    opt2.value = currentVersion;
+                    opt2.textContent = currentVersion;
+                    opt2.selected = true;
+                    versionSelect.appendChild(opt2);
+                }
+                versionSelect.disabled = false;
+            });
+    }
+
+    if (versionSelect) {
+        loadVersions();
+    }
+</script>
+{% endblock %}

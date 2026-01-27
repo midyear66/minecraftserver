@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Players - {{ server.name }} - MC Server Manager{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1 style="margin-bottom: 0;">Player Management - {{ server.name }}</h1>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+
+{% if status == 'running' %}
+<div class="card" style="border-color: #28a745; padding: 1rem;">
+    <p style="color: #28a745; margin: 0;">
+        Server is <strong>running</strong>. Changes are applied immediately via server commands.
+    </p>
+</div>
+{% else %}
+<div class="card" style="border-color: #ffc107; padding: 1rem;">
+    <p style="color: #ffc107; margin: 0;">
+        Server is <strong>stopped</strong>. Changes are saved to files and take effect on next start.
+    </p>
+</div>
+{% endif %}
+
+<!-- Whitelist -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">Whitelist</h2>
+        <form method="POST" action="{{ url_for('toggle_whitelist', port=server.external_port) }}" style="display: flex; align-items: center; gap: 0.75rem;">
+            <span style="color: #aaa; font-size: 0.9rem;">
+                {% if whitelist_enabled %}
+                <span style="color: #28a745;">Enabled</span>
+                {% else %}
+                <span style="color: #dc3545;">Disabled</span>
+                {% endif %}
+            </span>
+            <button type="submit" class="btn btn-sm {% if whitelist_enabled %}btn-danger{% else %}btn-success{% endif %}">
+                {% if whitelist_enabled %}Disable{% else %}Enable{% endif %}
+            </button>
+        </form>
+    </div>
+
+    {% if whitelist %}
+    <table>
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>UUID</th>
+                <th style="width: 100px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for player in whitelist %}
+            <tr>
+                <td>{{ player.name }}</td>
+                <td><code style="font-size: 0.8rem; color: #888;">{{ player.uuid }}</code></td>
+                <td>
+                    <form method="POST" action="{{ url_for('remove_player', port=server.external_port, list_name='whitelist') }}" class="inline-form">
+                        <input type="hidden" name="username" value="{{ player.name }}">
+                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888; margin-bottom: 1rem;">No players on the whitelist.</p>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('add_player', port=server.external_port, list_name='whitelist') }}" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 1rem;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="wl-username">Add Player</label>
+            <input type="text" id="wl-username" name="username" placeholder="Player name" required>
+        </div>
+        <button type="submit" class="btn btn-success">Add</button>
+    </form>
+</div>
+
+<!-- Banned Players -->
+<div class="card">
+    <h2>Banned Players</h2>
+
+    {% if banned %}
+    <table>
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Reason</th>
+                <th>Date</th>
+                <th style="width: 100px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for player in banned %}
+            <tr>
+                <td>{{ player.name }}</td>
+                <td>{{ player.get('reason', 'No reason') }}</td>
+                <td style="font-size: 0.85rem; color: #888;">{{ player.get('created', 'Unknown')[:19] }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('remove_player', port=server.external_port, list_name='banned') }}" class="inline-form">
+                        <input type="hidden" name="username" value="{{ player.name }}">
+                        <button type="submit" class="btn btn-success btn-sm">Unban</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888; margin-bottom: 1rem;">No banned players.</p>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('add_player', port=server.external_port, list_name='banned') }}" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 1rem;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="ban-username">Ban Player</label>
+            <input type="text" id="ban-username" name="username" placeholder="Player name" required>
+        </div>
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="ban-reason">Reason (optional)</label>
+            <input type="text" id="ban-reason" name="reason" placeholder="Banned by admin">
+        </div>
+        <button type="submit" class="btn btn-danger">Ban</button>
+    </form>
+</div>
+
+<!-- Operators -->
+<div class="card">
+    <h2>Operators</h2>
+
+    {% if ops %}
+    <table>
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Level</th>
+                <th>UUID</th>
+                <th style="width: 100px;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for player in ops %}
+            <tr>
+                <td>{{ player.name }}</td>
+                <td>{{ player.get('level', 4) }}</td>
+                <td><code style="font-size: 0.8rem; color: #888;">{{ player.uuid }}</code></td>
+                <td>
+                    <form method="POST" action="{{ url_for('remove_player', port=server.external_port, list_name='ops') }}" class="inline-form">
+                        <input type="hidden" name="username" value="{{ player.name }}">
+                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888; margin-bottom: 1rem;">No operators configured.</p>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('add_player', port=server.external_port, list_name='ops') }}" style="display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 1rem;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="op-username">Add Operator</label>
+            <input type="text" id="op-username" name="username" placeholder="Player name" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Add Op</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block title %}Console - {{ server.name }} - MC Server Manager{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1 style="margin-bottom: 0;">Console - {{ server.name }}</h1>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">Console Output</h2>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <span id="status-indicator">
+                {% if status == 'running' %}
+                <span class="status-badge status-running">Running</span>
+                {% else %}
+                <span class="status-badge status-stopped">{{ status | title }}</span>
+                {% endif %}
+            </span>
+            <label style="display: flex; align-items: center; gap: 0.4rem; margin: 0; cursor: pointer;">
+                <input type="checkbox" id="auto-scroll" checked>
+                <span style="color: #aaa; font-size: 0.85rem;">Auto-scroll</span>
+            </label>
+        </div>
+    </div>
+
+    <div id="console-output" style="
+        background: #0d1117;
+        border: 1px solid #0f3460;
+        border-radius: 4px;
+        padding: 1rem;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.85rem;
+        color: #c9d1d9;
+        max-height: 500px;
+        min-height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        line-height: 1.4;
+    ">
+        {% if status != 'running' %}
+        <span style="color: #f85149;">Server is not running. Start the server to see console output.</span>
+        {% else %}
+        <span style="color: #888;">Loading console output...</span>
+        {% endif %}
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+        <input type="text" id="command-input" placeholder="Enter server command..."
+               style="flex: 1;" {% if status != 'running' %}disabled{% endif %}>
+        <button id="send-btn" class="btn btn-primary" {% if status != 'running' %}disabled{% endif %}>
+            Send
+        </button>
+    </div>
+    <p style="color: #888; font-size: 0.8rem; margin-top: 0.5rem;">
+        Examples: <code>list</code>, <code>say Hello</code>, <code>weather clear</code>, <code>time set day</code>
+    </p>
+</div>
+
+<style>
+    #console-output::-webkit-scrollbar {
+        width: 8px;
+    }
+    #console-output::-webkit-scrollbar-track {
+        background: #0d1117;
+    }
+    #console-output::-webkit-scrollbar-thumb {
+        background: #30363d;
+        border-radius: 4px;
+    }
+    #command-input:disabled, #send-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const port = {{ server.external_port }};
+    const consoleOutput = document.getElementById('console-output');
+    const commandInput = document.getElementById('command-input');
+    const sendBtn = document.getElementById('send-btn');
+    const autoScrollCheckbox = document.getElementById('auto-scroll');
+    const statusIndicator = document.getElementById('status-indicator');
+    let serverRunning = {{ 'true' if status == 'running' else 'false' }};
+
+    function scrollToBottom() {
+        if (autoScrollCheckbox.checked) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function updateControls(running) {
+        serverRunning = running;
+        commandInput.disabled = !running;
+        sendBtn.disabled = !running;
+        if (running) {
+            statusIndicator.innerHTML = '<span class="status-badge status-running">Running</span>';
+        } else {
+            statusIndicator.innerHTML = '<span class="status-badge status-stopped">Stopped</span>';
+        }
+    }
+
+    function fetchLogs() {
+        fetch('/api/console/' + port + '?lines=200')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    consoleOutput.innerHTML = '<span style="color: #f85149;">' + escapeHtml(data.error) + '</span>';
+                    updateControls(false);
+                    return;
+                }
+
+                updateControls(data.status === 'running');
+
+                if (data.lines && data.lines.length > 0) {
+                    consoleOutput.innerHTML = data.lines.map(function(line) {
+                        return escapeHtml(line);
+                    }).join('\n');
+                } else {
+                    consoleOutput.innerHTML = '<span style="color: #888;">No output yet.</span>';
+                }
+
+                scrollToBottom();
+            })
+            .catch(function(err) {
+                console.error('Console fetch error:', err);
+            });
+    }
+
+    function sendCommand() {
+        const command = commandInput.value.trim();
+        if (!command || !serverRunning) return;
+
+        commandInput.value = '';
+        sendBtn.disabled = true;
+
+        fetch('/api/console/' + port + '/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        })
+        .then(response => response.json())
+        .then(data => {
+            sendBtn.disabled = false;
+            if (!data.success) {
+                const errorLine = document.createElement('div');
+                errorLine.style.color = '#f85149';
+                errorLine.textContent = 'Error: ' + data.error;
+                consoleOutput.appendChild(errorLine);
+                scrollToBottom();
+            }
+            setTimeout(fetchLogs, 500);
+        })
+        .catch(function(err) {
+            sendBtn.disabled = false;
+            console.error('Command send error:', err);
+        });
+
+        commandInput.focus();
+    }
+
+    sendBtn.addEventListener('click', sendCommand);
+    commandInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            sendCommand();
+        }
+    });
+
+    fetchLogs();
+    setInterval(fetchLogs, 2000);
+</script>
+{% endblock %}
