@@ -1344,6 +1344,14 @@ def logs():
     # Reverse to show newest first
     entries.reverse()
 
+    # Map generic server names to configured names using port
+    config = load_config()
+    port_names = {int(s['external_port']): s['name'] for s in config.get('servers', []) if 'external_port' in s and 'name' in s}
+    for entry in entries:
+        port = entry.get('port')
+        if port and port in port_names:
+            entry['server_name'] = port_names[port]
+
     return render_template('logs.html',
                          log_files=log_files,
                          selected_file=selected_file,
@@ -1384,6 +1392,14 @@ def api_logs():
 
     # Reverse to show newest first
     entries.reverse()
+
+    # Map generic server names to configured names using port
+    config = load_config()
+    port_names = {int(s['external_port']): s['name'] for s in config.get('servers', []) if 'external_port' in s and 'name' in s}
+    for entry in entries:
+        port = entry.get('port')
+        if port and port in port_names:
+            entry['server_name'] = port_names[port]
 
     return jsonify({'entries': entries, 'count': len(entries)})
 

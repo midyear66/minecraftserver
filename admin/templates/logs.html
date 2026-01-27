@@ -25,8 +25,17 @@
     </div>
 </div>
 
+<div class="card" id="filter-card">
+    <h2>Filter by Server</h2>
+    <div id="server-filters" class="filter-checkboxes">
+        <label class="filter-checkbox">
+            <input type="checkbox" id="filter-all" checked> All
+        </label>
+    </div>
+</div>
+
 <div class="card" id="events-card">
-    <h2>Events ({{ entries|length }} total)</h2>
+    <h2>Events (<span id="filtered-count">{{ entries|length }}</span> of {{ entries|length }} total)</h2>
     <table id="events-table" {% if not entries %}style="display: none;"{% endif %}>
         <thead>
             <tr>
@@ -123,11 +132,37 @@
         background: #3a2a0a;
         color: #ffc107;
     }
+
+    .filter-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+    }
+
+    .filter-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 0.9rem;
+        user-select: none;
+    }
+
+    .filter-checkbox input[type="checkbox"] {
+        width: auto;
+        accent-color: #e94560;
+        cursor: pointer;
+    }
 </style>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    let allEntries = [];
+    let knownServers = new Set();
+
     function formatEvent(event) {
         const eventMap = {
             'server_start': 'Start',
@@ -148,6 +183,120 @@
         return '';
     }
 
+    function getCheckedServers() {
+        const allBox = document.getElementById('filter-all');
+        if (allBox && allBox.checked) return null; // null means show all
+        const checked = [];
+        document.querySelectorAll('#server-filters input[data-server]').forEach(cb => {
+            if (cb.checked) checked.push(cb.dataset.server);
+        });
+        return checked;
+    }
+
+    function buildFilterCheckboxes(entries) {
+        const servers = new Set();
+        entries.forEach(e => servers.add(e.server_name || 'Unknown'));
+
+        // Only rebuild if server list changed
+        const serverList = Array.from(servers).sort();
+        const knownList = Array.from(knownServers).sort();
+        if (JSON.stringify(serverList) === JSON.stringify(knownList)) return;
+        knownServers = servers;
+
+        // Preserve current checked state
+        const wasAllChecked = document.getElementById('filter-all')?.checked ?? true;
+        const previouslyChecked = new Set();
+        document.querySelectorAll('#server-filters input[data-server]').forEach(cb => {
+            if (cb.checked) previouslyChecked.add(cb.dataset.server);
+        });
+
+        const container = document.getElementById('server-filters');
+        // Keep the All checkbox, clear the rest
+        const allLabel = container.querySelector('label:first-child');
+        container.innerHTML = '';
+        container.appendChild(allLabel);
+
+        serverList.forEach(name => {
+            const label = document.createElement('label');
+            label.className = 'filter-checkbox';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.dataset.server = name;
+            cb.checked = wasAllChecked || previouslyChecked.has(name);
+            cb.addEventListener('change', onServerCheckboxChange);
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(' ' + name));
+            container.appendChild(label);
+        });
+    }
+
+    function onAllCheckboxChange() {
+        const allBox = document.getElementById('filter-all');
+        document.querySelectorAll('#server-filters input[data-server]').forEach(cb => {
+            cb.checked = allBox.checked;
+        });
+        applyFilter();
+    }
+
+    function onServerCheckboxChange() {
+        const allBox = document.getElementById('filter-all');
+        const serverBoxes = document.querySelectorAll('#server-filters input[data-server]');
+        const allChecked = Array.from(serverBoxes).every(cb => cb.checked);
+        allBox.checked = allChecked;
+        applyFilter();
+    }
+
+    function applyFilter() {
+        const checkedServers = getCheckedServers();
+        const table = document.getElementById('events-table');
+        const noEventsMsg = document.getElementById('no-events-msg');
+        const tbody = table ? table.querySelector('tbody') : null;
+        if (!tbody) return;
+
+        const filtered = checkedServers === null
+            ? allEntries
+            : allEntries.filter(e => checkedServers.includes(e.server_name || 'Unknown'));
+
+        const filteredCount = document.getElementById('filtered-count');
+        if (filteredCount) {
+            filteredCount.textContent = filtered.length;
+        }
+
+        if (filtered.length > 0) {
+            table.style.display = '';
+            if (noEventsMsg) noEventsMsg.style.display = 'none';
+            tbody.innerHTML = filtered.map(entry => `
+                <tr>
+                    <td>${entry.timestamp.substring(0, 19).replace('T', ' ')}</td>
+                    <td>
+                        <span class="event-badge event-${entry.event}">
+                            ${formatEvent(entry.event)}
+                        </span>
+                    </td>
+                    <td>${entry.player_name || '-'}</td>
+                    <td>${entry.server_name || 'Unknown'}</td>
+                    <td>${entry.port}</td>
+                    <td>${formatDetails(entry)}</td>
+                </tr>
+            `).join('');
+        } else {
+            table.style.display = 'none';
+            if (noEventsMsg) noEventsMsg.style.display = '';
+        }
+    }
+
+    function renderEntries(entries, totalCount) {
+        allEntries = entries;
+
+        const countHeader = document.querySelector('#events-card h2');
+        if (countHeader) {
+            countHeader.innerHTML = `Events (<span id="filtered-count">${entries.length}</span> of ${totalCount} total)`;
+        }
+
+        buildFilterCheckboxes(entries);
+        applyFilter();
+    }
+
     function updateLogs() {
         const select = document.querySelector('.log-select-form select');
         const selectedFile = select ? select.value : '';
@@ -156,42 +305,26 @@
         fetch(url)
             .then(response => response.json())
             .then(data => {
-                const countHeader = document.querySelector('#events-card h2');
-                const table = document.getElementById('events-table');
-                const noEventsMsg = document.getElementById('no-events-msg');
-                const tbody = table ? table.querySelector('tbody') : null;
-
-                if (countHeader) {
-                    countHeader.textContent = `Events (${data.count} total)`;
-                }
-
-                if (data.entries.length > 0) {
-                    if (table) table.style.display = '';
-                    if (noEventsMsg) noEventsMsg.style.display = 'none';
-
-                    if (tbody) {
-                        tbody.innerHTML = data.entries.map(entry => `
-                            <tr>
-                                <td>${entry.timestamp.substring(0, 19).replace('T', ' ')}</td>
-                                <td>
-                                    <span class="event-badge event-${entry.event}">
-                                        ${formatEvent(entry.event)}
-                                    </span>
-                                </td>
-                                <td>${entry.player_name || '-'}</td>
-                                <td>${entry.server_name || 'Unknown'}</td>
-                                <td>${entry.port}</td>
-                                <td>${formatDetails(entry)}</td>
-                            </tr>
-                        `).join('');
-                    }
-                } else {
-                    if (table) table.style.display = 'none';
-                    if (noEventsMsg) noEventsMsg.style.display = '';
-                }
+                renderEntries(data.entries, data.count);
             })
             .catch(err => console.error('Log update failed:', err));
     }
+
+    // Initialize filters from server-rendered data
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('filter-all').addEventListener('change', onAllCheckboxChange);
+
+        // Build initial server list from existing table rows
+        const rows = document.querySelectorAll('#events-table tbody tr');
+        const initialEntries = [];
+        rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length >= 4) {
+                initialEntries.push({ server_name: cells[3].textContent.trim() });
+            }
+        });
+        buildFilterCheckboxes(initialEntries);
+    });
 
     // Poll every 5 seconds
     setInterval(updateLogs, 5000);
