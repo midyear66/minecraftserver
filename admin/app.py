@@ -894,16 +894,45 @@ def api_status():
     """API endpoint for getting current server status (for AJAX refresh)"""
     config = load_config()
 
+    # Read proxy state file
+    proxy_state = {}
+    try:
+        with open('/config/proxy_state.json', 'r') as f:
+            proxy_state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    client = get_docker_client()
+
     servers = []
     for srv in config.get('servers', []):
         container_name = srv.get('container_name', '')
         status = get_container_status(container_name)
+        port_str = str(srv.get('external_port', ''))
+        ps = proxy_state.get(port_str, {})
+        env = srv.get('env', {})
+
+        # Get container uptime if running
+        started_at = None
+        if status == 'running':
+            try:
+                container = client.containers.get(container_name)
+                started_at = container.attrs['State'].get('StartedAt', '')
+            except Exception:
+                pass
 
         servers.append({
             'name': srv.get('name', ''),
             'external_port': srv.get('external_port'),
             'running': status == 'running',
             'status': status,
+            'players': ps.get('players', 0),
+            'shutdown_seconds': ps.get('shutdown_seconds'),
+            'started_at': started_at,
+            'motd': env.get('MOTD', 'A Minecraft Server'),
+            'mode': env.get('MODE', 'survival'),
+            'difficulty': env.get('DIFFICULTY', 'easy'),
+            'max_players': env.get('MAX_PLAYERS', '20'),
         })
 
     servers.sort(key=lambda s: s['name'].lower())

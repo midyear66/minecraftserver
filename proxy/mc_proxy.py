@@ -20,6 +20,7 @@ from notifications import NotificationManager
 
 # Configuration
 CONFIG_PATH = '/app/config/config.json'
+PROXY_STATE_PATH = '/app/config/proxy_state.json'
 LOGS_DIR = '/app/logs'
 MC_DATA_DIR = '/mc_data'
 
@@ -97,6 +98,7 @@ notification_manager = None
 server_connections = {}  # port -> count of active connections
 server_states = {}  # port -> 'stopped' | 'starting' | 'running'
 shutdown_timers = {}  # port -> Timer object
+timer_start_times = {}  # port -> time.time() when shutdown timer was started
 state_lock = threading.Lock()
 
 
@@ -108,6 +110,41 @@ def load_config() -> dict:
     except Exception as e:
         print(f"Error loading config: {e}")
         return {}
+
+
+def write_proxy_state():
+    """Write current proxy state to shared file for admin panel."""
+    state = {}
+    with state_lock:
+        all_ports = set(list(server_connections.keys()) +
+                        list(server_states.keys()) +
+                        list(shutdown_timers.keys()))
+        for port in all_ports:
+            timer = shutdown_timers.get(port)
+            shutdown_remaining = None
+            if timer and timer.is_alive():
+                started = timer_start_times.get(port, time.time())
+                elapsed = time.time() - started
+                remaining = max(0, int(timer.interval - elapsed))
+                shutdown_remaining = remaining
+
+            state[str(port)] = {
+                'players': server_connections.get(port, 0),
+                'state': server_states.get(port, 'stopped'),
+                'shutdown_seconds': shutdown_remaining,
+            }
+    try:
+        with open(PROXY_STATE_PATH, 'w') as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
+
+def periodic_state_writer():
+    """Periodically write proxy state so the admin panel sees live countdowns."""
+    while True:
+        time.sleep(5)
+        write_proxy_state()
 
 
 # ============== Player List Checks ==============
@@ -415,7 +452,10 @@ def increment_connections(port: int, docker_mgr: DockerManager, player_name: str
         if port in shutdown_timers:
             shutdown_timers[port].cancel()
             del shutdown_timers[port]
+            timer_start_times.pop(port, None)
         print(f"[Port {port}] Connections: {count} (player: {player_name})")
+
+    write_proxy_state()
 
     # Log player join (outside lock to avoid blocking)
     server = docker_mgr.get_server_by_port(port)
@@ -448,9 +488,12 @@ def decrement_connections(port: int, config: dict, docker_mgr: DockerManager, pl
                     if server_connections.get(port, 0) == 0:
                         print(f"[Port {port}] Shutting down server (idle timeout)")
                         server_states[port] = 'stopped'
+                        shutdown_timers.pop(port, None)
+                        timer_start_times.pop(port, None)
                         should_stop = True
                 # Stop container outside the lock (can take up to 30s)
                 if should_stop:
+                    write_proxy_state()
                     docker_mgr.stop_server(port)
                     usage_logger.log_server_stop(port, 'idle_timeout', name)
                     if notification_manager:
@@ -458,7 +501,10 @@ def decrement_connections(port: int, config: dict, docker_mgr: DockerManager, pl
 
             timer = threading.Timer(timeout_minutes * 60, do_shutdown)
             shutdown_timers[port] = timer
+            timer_start_times[port] = time.time()
             timer.start()
+
+    write_proxy_state()
 
     # Log player leave (outside lock)
     usage_logger.log_player_leave(port, count, name, player_name)
@@ -649,6 +695,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
             print(f"[Port {port}] Starting server for login request")
             with state_lock:
                 server_states[port] = 'starting'
+            write_proxy_state()
 
             if not docker_mgr.start_server(port):
                 print(f"[Port {port}] Failed to start server container")
@@ -656,6 +703,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
                 client.close()
                 with state_lock:
                     server_states[port] = 'stopped'
+                write_proxy_state()
                 return
 
             # Wait for server to be ready
@@ -665,10 +713,12 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
                 client.close()
                 with state_lock:
                     server_states[port] = 'stopped'
+                write_proxy_state()
                 return
 
             with state_lock:
                 server_states[port] = 'running'
+            write_proxy_state()
 
             # Log successful server start
             usage_logger.log_server_start(port, name)
@@ -789,6 +839,11 @@ def main():
     # Initialize notification manager
     notification_manager = NotificationManager(config)
     print("Notification manager initialized")
+
+    # Start periodic state writer for live dashboard updates
+    state_writer = threading.Thread(target=periodic_state_writer)
+    state_writer.daemon = True
+    state_writer.start()
 
     # Start listeners for each configured server
     threads = []

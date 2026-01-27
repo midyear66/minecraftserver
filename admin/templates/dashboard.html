@@ -24,7 +24,7 @@
         <tbody>
             {% for server in servers %}
             <tr data-port="{{ server.external_port }}">
-                <td>{{ server.name }}</td>
+                <td class="server-name" style="cursor: pointer;">{{ server.name }}</td>
                 <td>{{ server.external_port }}</td>
                 <td>{{ server.type }}</td>
                 <td>{{ server.version }}</td>
@@ -50,6 +50,38 @@
                     <form method="POST" action="{{ url_for('remove_server', port=server.external_port) }}" class="inline-form" onsubmit="return confirm('Remove server &quot;{{ server.name }}&quot;? Container will be deleted but data is preserved.')">
                         <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
                     </form>
+                </td>
+            </tr>
+            <tr class="detail-row" data-detail-port="{{ server.external_port }}" style="display: none;">
+                <td colspan="7">
+                    <div class="server-detail">
+                        <div class="detail-grid">
+                            <div class="detail-item">
+                                <span class="detail-label">Players</span>
+                                <span class="detail-value players-count">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Uptime</span>
+                                <span class="detail-value uptime">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Auto-Shutdown</span>
+                                <span class="detail-value shutdown-timer">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">MOTD</span>
+                                <span class="detail-value motd">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Game Mode</span>
+                                <span class="detail-value mode">-</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Difficulty</span>
+                                <span class="detail-value difficulty">-</span>
+                            </div>
+                        </div>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
@@ -102,10 +134,78 @@
         Remember to forward the server port (TCP) on your router for external access.
     </p>
 </div>
+
+<style>
+    .server-name:hover {
+        color: #e94560;
+    }
+
+    .detail-row td {
+        padding-top: 0;
+        border-top: none;
+    }
+
+    .server-detail {
+        padding: 0.75rem 0;
+    }
+
+    .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+    }
+
+    .detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .detail-label {
+        color: #888;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+    }
+
+    .detail-value {
+        color: #eee;
+        font-size: 0.95rem;
+    }
+
+    @media (max-width: 600px) {
+        .detail-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    function formatUptime(startedAt) {
+        if (!startedAt) return '-';
+        const start = new Date(startedAt);
+        const now = new Date();
+        const diff = Math.floor((now - start) / 1000);
+        if (diff < 0) return '-';
+        const h = Math.floor(diff / 3600);
+        const m = Math.floor((diff % 3600) / 60);
+        if (h > 0) return h + 'h ' + m + 'm';
+        return m + 'm';
+    }
+
+    function formatShutdown(seconds) {
+        if (seconds === null || seconds === undefined) return '-';
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return m + 'm ' + s + 's';
+    }
+
+    function capitalize(str) {
+        if (!str) return '-';
+        return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
     function updateStatus() {
         fetch('/api/status')
             .then(response => response.json())
@@ -136,13 +236,42 @@
                         consoleBtn.style.opacity = server.running ? '' : '0.5';
                         consoleBtn.style.pointerEvents = server.running ? '' : 'none';
                     }
+
+                    // Update detail row
+                    const detail = document.querySelector(`tr[data-detail-port="${server.external_port}"]`);
+                    if (detail) {
+                        detail.querySelector('.players-count').textContent =
+                            server.running ? server.players + ' / ' + server.max_players : '-';
+                        detail.querySelector('.uptime').textContent =
+                            server.running ? formatUptime(server.started_at) : '-';
+                        detail.querySelector('.shutdown-timer').textContent =
+                            (server.shutdown_seconds !== null && server.shutdown_seconds !== undefined && server.running)
+                                ? formatShutdown(server.shutdown_seconds)
+                                : (server.running ? 'Players connected' : '-');
+                        detail.querySelector('.motd').textContent = server.motd || '-';
+                        detail.querySelector('.mode').textContent = capitalize(server.mode);
+                        detail.querySelector('.difficulty').textContent = capitalize(server.difficulty);
+                    }
                 });
             })
             .catch(err => console.error('Status update failed:', err));
     }
 
+    // Toggle detail rows on server name click
+    document.querySelectorAll('.server-name').forEach(function(el) {
+        el.addEventListener('click', function() {
+            const port = this.closest('tr').dataset.port;
+            const detailRow = document.querySelector('tr[data-detail-port="' + port + '"]');
+            if (detailRow) {
+                detailRow.style.display = detailRow.style.display === 'none' ? '' : 'none';
+            }
+        });
+    });
+
     // Poll every 5 seconds
     setInterval(updateStatus, 5000);
+    // Initial fetch to populate detail rows immediately
+    updateStatus();
 
     // Version dropdown logic
     const typeSelect = document.getElementById('type');
