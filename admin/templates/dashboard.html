@@ -99,21 +99,6 @@
         <button type="submit" class="btn btn-primary">Create Server</button>
     </form>
 </div>
-
-<div class="card">
-    <h2>Proxy Settings</h2>
-    <table>
-        <tr>
-            <td style="color: #888;">Auto Shutdown</td>
-            <td>{{ 'Enabled' if config.auto_shutdown else 'Disabled' }}</td>
-        </tr>
-        <tr>
-            <td style="color: #888;">Idle Timeout</td>
-            <td>{{ config.timeout }} minutes</td>
-        </tr>
-    </table>
-    <a href="{{ url_for('settings') }}" class="btn btn-secondary" style="margin-top: 1rem;">Edit Settings</a>
-</div>
 {% endblock %}
 
 {% block scripts %}

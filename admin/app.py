@@ -856,6 +856,20 @@ def update_server(port):
 def settings():
     config = load_config()
 
+    # Ensure notifications config exists with defaults
+    if 'notifications' not in config:
+        config['notifications'] = {
+            'email': {
+                'enabled': False, 'smtp_host': '', 'smtp_port': 587, 'smtp_tls': True,
+                'smtp_user': '', 'smtp_password': '', 'from_address': '', 'to_addresses': [],
+                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False}
+            },
+            'pushover': {
+                'enabled': False, 'user_key': '', 'app_token': '', 'priority': 0,
+                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False}
+            }
+        }
+
     if request.method == 'POST':
         config['timeout'] = int(request.form.get('timeout', 5))
         config['auto_shutdown'] = request.form.get('auto_shutdown') == 'on'
@@ -1515,7 +1529,7 @@ def notifications():
         else:
             flash('Notification settings saved but failed to restart proxy', 'warning')
 
-        return redirect(url_for('notifications'))
+        return redirect(url_for('settings'))
 
     return render_template('notifications.html', config=config)
 
