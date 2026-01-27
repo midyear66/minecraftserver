@@ -325,3 +325,173 @@ No new files. No deleted files.
 | Bedrock version API unavailable | Offer `LATEST` only (or `LATEST` + `PREVIOUS`); users rarely pin Bedrock versions |
 | Player tracking for idle shutdown | Use session timeout (no UDP traffic = player gone); periodic backend pings as fallback |
 | Bedrock player management differs | Defer to Phase 2 enhancement; Console page works for all command needs |
+
+---
+
+# Commercial Feature Parity Roadmap
+
+## Current Feature Summary
+
+| Category | Features |
+|---|---|
+| **Server Management** | Create, start, stop, edit, remove servers; 5 server types (Vanilla, Paper, Spigot, Fabric, Forge) |
+| **Wake-on-Connect Proxy** | Minecraft protocol-aware proxy that starts servers on player login (sleep mode) |
+| **Console** | Live log streaming, command execution |
+| **Backups** | Manual + auto backups, restore, download, pruning, safe creation with save-off/save-on |
+| **Player Management** | Whitelist, bans, ops with Mojang UUID lookup |
+| **Notifications** | Email (SMTP) + Pushover for server/player events |
+| **Monitoring** | Usage logging (JSON-lines), dashboard with status/player counts |
+| **Auth** | Single admin login with session management |
+| **Docker** | Full Docker SDK integration, container health checks, auto-shutdown on idle |
+
+## Competitive Landscape
+
+Key commercial and open-source panels: Pterodactyl, AMP (CubeCoders), Multicraft, PufferPanel, MCSManager, TCAdmin, GameCP.
+
+### Strengths vs Commercial Panels
+
+- **Wake-on-connect proxy** -- Genuine differentiator. AMP markets their "Sleep Mode" as unique. Pterodactyl has no native equivalent. Our Minecraft protocol-level implementation (VarInt parsing, handshake detection, status vs login routing) is on par with or better than commercial offerings.
+- **Notification system** -- Email + Pushover with per-event toggles is more developed than what most panels ship out of the box.
+- **Backup system** -- Safe backup creation with save-off/save-on, auto-pruning, and scheduled backups is competitive with commercial panels.
+
+### Feature Gaps
+
+| Feature | Pterodactyl | AMP | Multicraft | **Us** |
+|---|---|---|---|---|
+| **Multi-user / Subusers** | Granular RBAC per server | Full permission system | User tiers | Single admin only |
+| **2FA / Security** | TOTP 2FA + recovery codes | OIDC/SSO support | Password only | Password only |
+| **File Manager** | Web-based with chmod, search, batch ops | Syntax-highlighting editor + SFTP | FTP + web editor | None |
+| **Task Scheduler** | Cron-based, arbitrary tasks | Event-driven scheduler | Scheduled commands | Auto-backup interval only |
+| **REST API** | Full public API | Plugin API + self-consuming API | Robust API | Internal only |
+| **Resource Monitoring** | CPU/RAM/disk per container | In-game analytics, play time tracking | Basic stats | Connection count only |
+| **Database Management** | Per-server MySQL provisioning | Via plugins | MySQL management | None |
+| **Mod/Plugin Manager** | Via eggs/templates | Config-aware UI | Built-in plugin list | None |
+| **SFTP/File Transfer** | Built-in SFTP per server | Integrated SFTP (per-instance ports) | Built-in FTP | None |
+| **Server Templates** | Community egg library | Game-specific templates | Jar management | Manual setup |
+| **Multi-node** | Distributed across nodes | Multi-instance ADS | Multi-daemon | Single host only |
+| **Billing Integration** | Via API | N/A | WHMCS, Blesta, FOSSBilling | None |
+
+---
+
+## Tier 1 -- High Impact, Moderate Effort
+
+### 1. Multi-user with RBAC
+
+The single biggest gap. Add user accounts with roles (admin, operator, viewer) and per-server permissions. This is table stakes for any shared or semi-commercial deployment.
+
+- User model with hashed passwords (e.g., `werkzeug.security` or `bcrypt`)
+- Role definitions: admin (full access), operator (start/stop/console/backups for assigned servers), viewer (read-only dashboard)
+- Per-server permission assignments
+- Session management per user
+- User management UI for admins
+
+### 2. File Manager
+
+A web-based file browser for server data directories. Eliminates the need for SSH access for routine tasks like editing configs or adding plugins.
+
+- Directory listing with breadcrumb navigation
+- File viewing and editing with syntax highlighting (CodeMirror or Monaco)
+- Upload, download, rename, delete operations
+- Archive extraction support (zip, tar.gz)
+- Path traversal prevention (already implemented for backups, extend to file manager)
+
+### 3. Task Scheduler
+
+Expand beyond auto-backup intervals. Add cron-style scheduling for arbitrary server commands.
+
+- Cron expression support (minute, hour, day, etc.)
+- Task types: run server command, restart server, create backup, send broadcast
+- Per-server schedules with enable/disable toggle
+- Execution log showing past runs and results
+- Cron cheatsheet in the UI (similar to Pterodactyl)
+
+### 4. Resource Monitoring
+
+Use Docker's stats API (`container.stats()`) to expose CPU, memory, disk, and network usage per server.
+
+- Real-time stats polling via Docker SDK
+- Dashboard widgets showing current CPU/RAM per server
+- Historical data storage (simple SQLite or JSON rolling window)
+- Graphs using Chart.js or similar lightweight library
+- Alerts when resource thresholds are exceeded (tie into notification system)
+
+---
+
+## Tier 2 -- Medium Impact, Moderate Effort
+
+### 5. Two-Factor Authentication
+
+Add TOTP-based 2FA using `pyotp`. With multi-user support, this becomes essential.
+
+- QR code generation for authenticator app setup
+- Recovery codes for lost devices
+- Optional enforcement (admin can require 2FA for all users)
+- Login throttling on 2FA verification endpoint
+
+### 6. REST API
+
+Expose server management operations as a documented JSON API. Enables automation, third-party integrations, Discord bots, and billing system hooks.
+
+- API key authentication (per-user)
+- Endpoints mirroring all admin panel operations (CRUD servers, start/stop, backups, players, etc.)
+- JSON request/response format
+- Rate limiting
+- OpenAPI/Swagger documentation
+
+### 7. Mod/Plugin Management
+
+Add a UI to browse and install plugins, or at minimum manage plugin files.
+
+- Upload JARs to the server's plugins directory via the file manager
+- Browse plugins from Modrinth/Hangar/SpigotMC APIs
+- One-click install/update for popular plugins
+- Plugin version tracking and update notifications
+
+### 8. SFTP Access
+
+Provide per-server SFTP for bulk file transfers.
+
+- Embedded SFTP server (e.g., `paramiko`) mapped to each server's data directory
+- Per-user scoped access (ties into RBAC)
+- Unique port per server or single port with user-based routing
+- Connection details displayed in admin panel
+
+---
+
+## Tier 3 -- Nice to Have
+
+### 9. WebSocket Console
+
+Replace polling-based console with WebSocket for true real-time streaming.
+
+- Flask-SocketIO or standalone WebSocket server
+- Bidirectional: live log output + command input
+- Reduced latency and server load vs polling
+- Connection status indicator
+
+### 10. Server Templates
+
+Pre-configured templates for common setups.
+
+- "SMP with Essentials", "Creative Server", "Modded Fabric", etc.
+- Auto-configure server type, version, plugins, and settings
+- User-creatable templates from existing server configs
+- Template sharing/export
+
+### 11. Multi-node Support
+
+Allow managing servers across multiple Docker hosts.
+
+- Remote Docker API or SSH tunnel connections
+- Node health monitoring
+- Server migration between nodes
+- Load-aware server placement (similar to Pterodactyl Wings architecture)
+
+### 12. Audit Log
+
+Log all admin actions beyond player activity.
+
+- Who started/stopped what server and when
+- Configuration changes with before/after values
+- User management actions (created, deleted, permission changes)
+- Searchable and filterable log viewer
