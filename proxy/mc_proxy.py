@@ -21,6 +21,7 @@ from notifications import NotificationManager
 # Configuration
 CONFIG_PATH = '/app/config/config.json'
 LOGS_DIR = '/app/logs'
+MC_DATA_DIR = '/mc_data'
 
 
 # ============== Usage Logging ==============
@@ -107,6 +108,45 @@ def load_config() -> dict:
     except Exception as e:
         print(f"Error loading config: {e}")
         return {}
+
+
+# ============== Player List Checks ==============
+
+def is_player_banned(container_name: str, player_name: str) -> bool:
+    """Check if a player is in the server's ban list."""
+    filepath = os.path.join(MC_DATA_DIR, container_name, 'banned-players.json')
+    try:
+        with open(filepath, 'r') as f:
+            banned = json.load(f)
+            return any(p.get('name', '').lower() == player_name.lower() for p in banned)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+
+def is_player_not_whitelisted(container_name: str, player_name: str) -> bool:
+    """Check if whitelist is enabled and the player is not on it.
+    Returns False if whitelist is disabled or files don't exist yet."""
+    props_path = os.path.join(MC_DATA_DIR, container_name, 'server.properties')
+    try:
+        whitelist_on = False
+        with open(props_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('white-list='):
+                    whitelist_on = line.split('=', 1)[1].strip() == 'true'
+                    break
+        if not whitelist_on:
+            return False
+    except FileNotFoundError:
+        return False
+
+    wl_path = os.path.join(MC_DATA_DIR, container_name, 'whitelist.json')
+    try:
+        with open(wl_path, 'r') as f:
+            whitelist = json.load(f)
+            return not any(p.get('name', '').lower() == player_name.lower() for p in whitelist)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
 
 
 # ============== Minecraft Protocol Helpers ==============
@@ -574,6 +614,20 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         except:
             pass
         return
+
+    # Check if player is unauthorized (notify only, server enforces)
+    if player_name:
+        container_name = server_info.get('container_name', '')
+        if is_player_banned(container_name, player_name):
+            print(f"[Port {port}] Banned player '{player_name}' attempting to connect")
+            if notification_manager:
+                notification_manager.notify('unauthorized_login',
+                    player=player_name, name=name or f'Port {port}', reason='banned')
+        elif is_player_not_whitelisted(container_name, player_name):
+            print(f"[Port {port}] Non-whitelisted player '{player_name}' attempting to connect")
+            if notification_manager:
+                notification_manager.notify('unauthorized_login',
+                    player=player_name, name=name or f'Port {port}', reason='not whitelisted')
 
     try:
         # Check actual Docker status (in-memory state can be stale if

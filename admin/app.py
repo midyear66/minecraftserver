@@ -80,7 +80,8 @@ def load_config():
                         'server_start': True,
                         'server_stop': True,
                         'player_join': False,
-                        'player_leave': False
+                        'player_leave': False,
+                        'unauthorized_login': False
                     }
                 },
                 'pushover': {
@@ -92,7 +93,8 @@ def load_config():
                         'server_start': True,
                         'server_stop': True,
                         'player_join': False,
-                        'player_leave': False
+                        'player_leave': False,
+                        'unauthorized_login': False
                     }
                 }
             }
@@ -862,11 +864,11 @@ def settings():
             'email': {
                 'enabled': False, 'smtp_host': '', 'smtp_port': 587, 'smtp_tls': True,
                 'smtp_user': '', 'smtp_password': '', 'from_address': '', 'to_addresses': [],
-                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False}
+                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False, 'unauthorized_login': False}
             },
             'pushover': {
                 'enabled': False, 'user_key': '', 'app_token': '', 'priority': 0,
-                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False}
+                'events': {'server_start': True, 'server_stop': True, 'player_join': False, 'player_leave': False, 'unauthorized_login': False}
             }
         }
 
@@ -1034,6 +1036,7 @@ def add_player(port, list_name):
         if list_name == 'banned' and reason:
             cmd = f'ban {username} {reason}'
         if send_mc_command(container_name, cmd):
+            time.sleep(1)  # Wait for server to process command and update files
             flash(f'Sent command: {cmd}', 'success')
         else:
             flash('Failed to send command to server', 'error')
@@ -1106,6 +1109,7 @@ def remove_player(port, list_name):
     if status == 'running':
         cmd = list_cfg['remove_cmd'].format(name=username)
         if send_mc_command(container_name, cmd):
+            time.sleep(1)  # Wait for server to process command and update files
             flash(f'Sent command: {cmd}', 'success')
         else:
             flash('Failed to send command to server', 'error')
@@ -1457,7 +1461,8 @@ def notifications():
                     'server_start': True,
                     'server_stop': True,
                     'player_join': False,
-                    'player_leave': False
+                    'player_leave': False,
+                    'unauthorized_login': False
                 }
             },
             'pushover': {
@@ -1469,7 +1474,8 @@ def notifications():
                     'server_start': True,
                     'server_stop': True,
                     'player_join': False,
-                    'player_leave': False
+                    'player_leave': False,
+                    'unauthorized_login': False
                 }
             }
         }
@@ -1500,7 +1506,8 @@ def notifications():
             'server_start': request.form.get('email_server_start') == 'on',
             'server_stop': request.form.get('email_server_stop') == 'on',
             'player_join': request.form.get('email_player_join') == 'on',
-            'player_leave': request.form.get('email_player_leave') == 'on'
+            'player_leave': request.form.get('email_player_leave') == 'on',
+            'unauthorized_login': request.form.get('email_unauthorized_login') == 'on'
         }
 
         # Pushover settings
@@ -1519,7 +1526,8 @@ def notifications():
             'server_start': request.form.get('pushover_server_start') == 'on',
             'server_stop': request.form.get('pushover_server_stop') == 'on',
             'player_join': request.form.get('pushover_player_join') == 'on',
-            'player_leave': request.form.get('pushover_player_leave') == 'on'
+            'player_leave': request.form.get('pushover_player_leave') == 'on',
+            'unauthorized_login': request.form.get('pushover_unauthorized_login') == 'on'
         }
 
         save_config(config)

@@ -31,6 +31,10 @@ MESSAGE_TEMPLATES = {
     'player_leave': {
         'subject': '[MC] Player Left: {player}',
         'body': '{player} left "{name}". Online: {count}'
+    },
+    'unauthorized_login': {
+        'subject': '[MC] Unauthorized Login Attempt: {player}',
+        'body': '{player} tried to join "{name}" but is {reason}'
     }
 }
 
@@ -266,7 +270,8 @@ DEFAULT_NOTIFICATIONS_CONFIG = {
             'server_start': True,
             'server_stop': True,
             'player_join': False,
-            'player_leave': False
+            'player_leave': False,
+            'unauthorized_login': False
         }
     },
     'pushover': {
@@ -278,7 +283,8 @@ DEFAULT_NOTIFICATIONS_CONFIG = {
             'server_start': True,
             'server_stop': True,
             'player_join': False,
-            'player_leave': False
+            'player_leave': False,
+            'unauthorized_login': False
         }
     }
 }

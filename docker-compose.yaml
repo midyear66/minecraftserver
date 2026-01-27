@@ -8,6 +8,7 @@ services:
       - ./proxy:/app/config
       - ./logs:/app/logs
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./mc_data:/mc_data:ro
 
   mc_admin:
     build: ./admin

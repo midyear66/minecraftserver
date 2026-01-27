@@ -114,6 +114,11 @@
                            {% if config.notifications.email.events.player_leave %}checked{% endif %}>
                     <label for="email_player_leave" style="margin-bottom: 0;">Player Leave</label>
                 </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="email_unauthorized_login" name="email_unauthorized_login"
+                           {% if config.notifications.email.events.unauthorized_login %}checked{% endif %}>
+                    <label for="email_unauthorized_login" style="margin-bottom: 0;">Unauthorized Login</label>
+                </div>
             </div>
         </div>
 
@@ -175,6 +180,11 @@
                     <input type="checkbox" id="pushover_player_leave" name="pushover_player_leave"
                            {% if config.notifications.pushover.events.player_leave %}checked{% endif %}>
                     <label for="pushover_player_leave" style="margin-bottom: 0;">Player Leave</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="pushover_unauthorized_login" name="pushover_unauthorized_login"
+                           {% if config.notifications.pushover.events.unauthorized_login %}checked{% endif %}>
+                    <label for="pushover_unauthorized_login" style="margin-bottom: 0;">Unauthorized Login</label>
                 </div>
             </div>
         </div>
