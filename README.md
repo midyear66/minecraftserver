@@ -50,7 +50,9 @@ The admin panel provides a web interface on port 8080 for server configuration, 
 
 5. **Create your first server** using the form on the dashboard.
 
-6. **Configure notifications** (optional) from the Settings page in the admin panel.
+6. **Forward the server port** (TCP) on your router if you want players to connect from outside your network.
+
+7. **Configure notifications** (optional) from the Settings page in the admin panel.
 
 > **Note:** The proxy service will restart automatically until your first server is created. This is normal -- once a server exists, the proxy stays running.
 
@@ -89,7 +91,8 @@ minecraftserver/
 ├── logs/                   # Usage logs (gitignored)
 ├── docker-compose.yaml
 ├── migrate.py              # Crafty Controller migration script
-└── .env.example            # Environment variable template
+├── .env.example            # Environment variable template
+└── FUTURE.md               # Bedrock & crossplay roadmap
 ```
 
 ## Migration from Crafty Controller
@@ -101,3 +104,7 @@ python3 migrate.py
 ```
 
 This scans `~/crafty/docker/servers/`, copies server data to `mc_data/`, and generates `proxy/config.json`. Run on the host machine, not inside a container.
+
+## Roadmap
+
+See [FUTURE.md](FUTURE.md) for the planned Bedrock server support and GeyserMC crossplay implementation.
