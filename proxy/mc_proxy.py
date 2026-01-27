@@ -403,15 +403,18 @@ def decrement_connections(port: int, config: dict, docker_mgr: DockerManager, pl
             print(f"[Port {port}] Scheduling shutdown in {timeout_minutes} minutes")
 
             def do_shutdown():
+                should_stop = False
                 with state_lock:
                     if server_connections.get(port, 0) == 0:
                         print(f"[Port {port}] Shutting down server (idle timeout)")
                         server_states[port] = 'stopped'
-                        docker_mgr.stop_server(port)
-                        usage_logger.log_server_stop(port, 'idle_timeout', name)
-                        # Send notification
-                        if notification_manager:
-                            notification_manager.notify('server_stop', name=name, reason='idle timeout')
+                        should_stop = True
+                # Stop container outside the lock (can take up to 30s)
+                if should_stop:
+                    docker_mgr.stop_server(port)
+                    usage_logger.log_server_stop(port, 'idle_timeout', name)
+                    if notification_manager:
+                        notification_manager.notify('server_stop', name=name, reason='idle timeout')
 
             timer = threading.Timer(timeout_minutes * 60, do_shutdown)
             shutdown_timers[port] = timer
@@ -573,9 +576,19 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         return
 
     try:
-        # Check if server is already running
+        # Check actual Docker status (in-memory state can be stale if
+        # the server was stopped via admin UI or crashed)
+        actually_running = docker_mgr.is_server_running(port)
+
         with state_lock:
             state = server_states.get(port, 'stopped')
+            # Sync in-memory state with reality
+            if actually_running and state == 'stopped':
+                server_states[port] = 'running'
+                state = 'running'
+            elif not actually_running and state == 'running':
+                server_states[port] = 'stopped'
+                state = 'stopped'
 
         if state == 'stopped':
             # Start the server
@@ -583,7 +596,13 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
             with state_lock:
                 server_states[port] = 'starting'
 
-            docker_mgr.start_server(port)
+            if not docker_mgr.start_server(port):
+                print(f"[Port {port}] Failed to start server container")
+                client.sendall(build_disconnect_packet("Failed to start server. Please try again."))
+                client.close()
+                with state_lock:
+                    server_states[port] = 'stopped'
+                return
 
             # Wait for server to be ready
             if not docker_mgr.wait_for_server_ready(port, timeout=120):
@@ -613,7 +632,9 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
 
         # Connect to the actual server via localhost
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.settimeout(10)
         server.connect(('127.0.0.1', internal_port))
+        server.settimeout(None)
 
         # Forward the handshake and login packets we already received
         server.sendall(handshake_raw + login_raw)
