@@ -659,8 +659,8 @@ def create_server():
         'memory': memory,
     }
 
-    # Create host data directory
-    data_path = os.path.join(HOST_DATA_DIR, container_name)
+    # Create server data directory (inside container mount)
+    data_path = os.path.join(MC_DATA_DIR, container_name)
     os.makedirs(data_path, exist_ok=True)
 
     # Create Docker container
