@@ -138,6 +138,75 @@
     </p>
 </div>
 
+<div class="card">
+    <h2>Import Server</h2>
+    <form method="POST" action="{{ url_for('import_server') }}" enctype="multipart/form-data" class="add-form">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="import_name">Name</label>
+                <input type="text" id="import_name" name="name" placeholder="Imported Server" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="import_port">Port</label>
+                <input type="number" id="import_port" name="port" placeholder="25565" required min="1" max="65535">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="import_memory">Memory</label>
+                <select id="import_memory" name="memory">
+                    <option value="2G" selected>2G</option>
+                    <option value="3G">3G</option>
+                    <option value="4G">4G</option>
+                    <option value="6G">6G</option>
+                    <option value="8G">8G</option>
+                </select>
+            </div>
+        </div>
+        <div style="display: flex; align-items: stretch; gap: 0.75rem; margin-top: 0.75rem;">
+            <div class="form-group" style="margin-bottom: 0; flex: 0 0 auto; display: flex; flex-direction: column;">
+                <label for="import_type">Source</label>
+                <select id="import_type" name="import_type" onchange="toggleImportType()" style="flex: 1;">
+                    <option value="file">Upload Archive</option>
+                    <option value="path">Local Path</option>
+                </select>
+            </div>
+            <div class="form-group" id="file_input_group" style="margin-bottom: 0; flex: 1; display: flex; flex-direction: column;">
+                <label for="server_file">Archive</label>
+                <input type="file" id="server_file" name="server_file" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip,application/x-gzip,application/x-tar,application/x-compressed-tar" style="flex: 1;">
+            </div>
+            <div class="form-group" id="path_input_group" style="display: none; margin-bottom: 0; flex: 1; flex-direction: column;">
+                <label for="server_path">Path</label>
+                <input type="text" id="server_path" name="server_path" placeholder="/path/to/server" style="flex: 1;">
+            </div>
+            <button type="submit" class="btn btn-primary" style="align-self: flex-end;">Import</button>
+            <label style="font-weight: normal; cursor: pointer; margin: 0; white-space: nowrap; align-self: flex-end;">
+                <input type="checkbox" name="auto_start" value="1" checked> Start after import
+            </label>
+        </div>
+    </form>
+</div>
+
+<script>
+function toggleImportType() {
+    const importType = document.getElementById('import_type').value;
+    const fileGroup = document.getElementById('file_input_group');
+    const pathGroup = document.getElementById('path_input_group');
+    const fileInput = document.getElementById('server_file');
+    const pathInput = document.getElementById('server_path');
+
+    if (importType === 'file') {
+        fileGroup.style.display = 'flex';
+        pathGroup.style.display = 'none';
+        fileInput.required = true;
+        pathInput.required = false;
+    } else {
+        fileGroup.style.display = 'none';
+        pathGroup.style.display = 'flex';
+        fileInput.required = false;
+        pathInput.required = true;
+    }
+}
+</script>
+
 <style>
     .server-name:hover {
         color: #e94560;
