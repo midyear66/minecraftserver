@@ -4,6 +4,9 @@ import re
 import time
 import functools
 import threading
+import zipfile
+import tarfile
+import shutil
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_file
 from werkzeug.utils import secure_filename
 import glob as glob_module
@@ -181,6 +184,109 @@ def get_next_internal_port(config):
     while port in used_ports:
         port += 1
     return port
+
+
+def detect_server_type(data_path):
+    """Detect Minecraft server type from files in the data directory."""
+    # Check for JAR files that indicate server type
+    jar_files = glob_module.glob(os.path.join(data_path, '*.jar'))
+    jar_names = [os.path.basename(f).lower() for f in jar_files]
+
+    for jar in jar_names:
+        if 'paper' in jar:
+            return 'PAPER'
+        if 'spigot' in jar:
+            return 'SPIGOT'
+        if 'fabric' in jar:
+            return 'FABRIC'
+        if 'forge' in jar or 'minecraftforge' in jar:
+            return 'FORGE'
+
+    # Check for mod/plugin directories
+    if os.path.isdir(os.path.join(data_path, 'mods')):
+        # Could be Fabric or Forge - default to Fabric as it's more common
+        return 'FABRIC'
+    if os.path.isdir(os.path.join(data_path, 'plugins')):
+        # Could be Paper or Spigot - default to Paper as it's more common
+        return 'PAPER'
+
+    return 'VANILLA'
+
+
+def detect_server_version(data_path):
+    """Detect Minecraft server version from files in the data directory."""
+    # Try to extract version from JAR filenames
+    jar_files = glob_module.glob(os.path.join(data_path, '*.jar'))
+    for jar_path in jar_files:
+        jar_name = os.path.basename(jar_path)
+        # Common patterns: paper-1.21.5.jar, minecraft_server.1.21.5.jar, server-1.21.jar
+        match = re.search(r'(\d+\.\d+(?:\.\d+)?)', jar_name)
+        if match:
+            return match.group(1)
+
+    # Try to read version.json if it exists
+    version_json_path = os.path.join(data_path, 'version.json')
+    if os.path.exists(version_json_path):
+        try:
+            with open(version_json_path, 'r') as f:
+                data = json.load(f)
+                if 'id' in data:
+                    return data['id']
+        except:
+            pass
+
+    return 'LATEST'
+
+
+def extract_archive(file, dest_path):
+    """Extract a ZIP or tar.gz archive to the destination path."""
+    filename = file.filename.lower()
+
+    # Save to temp location first
+    temp_path = os.path.join('/tmp', secure_filename(file.filename))
+    file.save(temp_path)
+
+    try:
+        if filename.endswith('.zip'):
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                # Check if archive has a single root directory
+                names = zf.namelist()
+                if names and all(n.startswith(names[0].split('/')[0] + '/') for n in names if n):
+                    # Single root folder - extract contents to dest
+                    root_folder = names[0].split('/')[0]
+                    for member in zf.namelist():
+                        if member.startswith(root_folder + '/'):
+                            # Strip the root folder from the path
+                            relative_path = member[len(root_folder) + 1:]
+                            if relative_path:
+                                target_path = os.path.join(dest_path, relative_path)
+                                if member.endswith('/'):
+                                    os.makedirs(target_path, exist_ok=True)
+                                else:
+                                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                                    with zf.open(member) as src, open(target_path, 'wb') as dst:
+                                        dst.write(src.read())
+                else:
+                    zf.extractall(dest_path)
+        elif filename.endswith('.tar.gz') or filename.endswith('.tgz'):
+            with tarfile.open(temp_path, 'r:gz') as tf:
+                # Check if archive has a single root directory
+                names = tf.getnames()
+                if names and all(n.startswith(names[0].split('/')[0] + '/') or n == names[0].split('/')[0] for n in names):
+                    root_folder = names[0].split('/')[0]
+                    for member in tf.getmembers():
+                        if member.name.startswith(root_folder + '/') or member.name == root_folder:
+                            # Strip the root folder from the path
+                            if member.name == root_folder:
+                                continue
+                            member.name = member.name[len(root_folder) + 1:]
+                            if member.name:
+                                tf.extract(member, dest_path)
+                else:
+                    tf.extractall(dest_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 def _fetch_mojang_versions():
@@ -690,6 +796,124 @@ def create_server():
         flash(f'Created server "{name}" on port {port} and restarted proxy', 'success')
     else:
         flash(f'Created server "{name}" on port {port} but failed to restart proxy', 'warning')
+
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/servers/import', methods=['POST'])
+@login_required
+def import_server():
+    """Import an existing Minecraft server from archive or local path."""
+    # Validate basic inputs
+    name = request.form.get('name', '').strip()
+    port = request.form.get('port', type=int)
+    memory = request.form.get('memory', '2G')
+    import_type = request.form.get('import_type', 'file')
+    auto_start = request.form.get('auto_start') == '1'
+
+    if not name:
+        flash('Server name is required', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Validate port
+    if not port or port < 1 or port > 65535:
+        flash('Invalid port number', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Check port not already in use
+    config = load_config()
+    for srv in config.get('servers', []):
+        if int(srv.get('external_port', 0)) == port:
+            flash(f'Port {port} is already in use', 'error')
+            return redirect(url_for('dashboard'))
+
+    # Create container name and data directory
+    container_name = sanitize_container_name(name)
+    data_path = os.path.join(MC_DATA_DIR, container_name)
+
+    # Check for existing container directory
+    if os.path.exists(data_path):
+        flash(f'Server directory already exists: {container_name}', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Handle import based on type
+    if import_type == 'file':
+        # File upload
+        file = request.files.get('server_file')
+        if not file or file.filename == '':
+            flash('No file selected', 'error')
+            return redirect(url_for('dashboard'))
+
+        filename = secure_filename(file.filename).lower()
+        if not (filename.endswith('.zip') or filename.endswith('.tar.gz') or filename.endswith('.tgz')):
+            flash('Invalid file format. Use ZIP or tar.gz', 'error')
+            return redirect(url_for('dashboard'))
+
+        # Extract archive
+        os.makedirs(data_path, exist_ok=True)
+        try:
+            extract_archive(file, data_path)
+        except Exception as e:
+            shutil.rmtree(data_path, ignore_errors=True)
+            flash(f'Failed to extract archive: {e}', 'error')
+            return redirect(url_for('dashboard'))
+
+    else:
+        # Local path
+        server_path = request.form.get('server_path', '').strip()
+        if not server_path:
+            flash('Server path is required', 'error')
+            return redirect(url_for('dashboard'))
+
+        if not os.path.isdir(server_path):
+            flash(f'Directory not found: {server_path}', 'error')
+            return redirect(url_for('dashboard'))
+
+        # Copy files from source to mc_data
+        try:
+            shutil.copytree(server_path, data_path)
+        except Exception as e:
+            flash(f'Failed to copy server files: {e}', 'error')
+            return redirect(url_for('dashboard'))
+
+    # Detect server type and version from imported files
+    server_type = detect_server_type(data_path)
+    version = detect_server_version(data_path)
+
+    # Allocate internal port and create config
+    internal_port = get_next_internal_port(config)
+
+    server_config = {
+        'name': name,
+        'container_name': container_name,
+        'external_port': port,
+        'internal_port': internal_port,
+        'type': server_type,
+        'version': version,
+        'memory': memory,
+    }
+
+    # Create Docker container
+    try:
+        create_mc_container(server_config)
+        if auto_start:
+            start_mc_container(container_name)
+    except Exception as e:
+        flash(f'Failed to create container: {e}', 'error')
+        return redirect(url_for('dashboard'))
+
+    # Save config and restart proxy
+    config.setdefault('servers', []).append(server_config)
+    try:
+        save_config(config)
+    except Exception as e:
+        flash(f'Server imported but failed to save config: {e}', 'error')
+        return redirect(url_for('dashboard'))
+
+    if restart_proxy():
+        flash(f'Imported server "{name}" on port {port} (detected: {server_type})', 'success')
+    else:
+        flash(f'Imported server "{name}" but failed to restart proxy', 'warning')
 
     return redirect(url_for('dashboard'))
 
