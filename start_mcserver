@@ -1,0 +1,665 @@
+#!/bin/bash
+#
+# start_mcserver - Minecraft Server Manager Start Script
+# Pulls updates, builds containers, starts services, and verifies health
+#
+# Supports: Linux, macOS, Windows (Git Bash/WSL)
+#
+
+set -e
+set -o pipefail
+
+# Script version
+SCRIPT_VERSION="1.0.0"
+
+# Timeouts (in seconds)
+CONTAINER_START_TIMEOUT=60
+HEALTH_CHECK_TIMEOUT=30
+HEALTH_CHECK_INTERVAL=2
+
+# Container names (from docker-compose.yaml)
+PROXY_CONTAINER="mc_proxy"
+ADMIN_CONTAINER="mc_admin"
+
+# Ports
+ADMIN_PORT=8080
+
+# Required directories
+REQUIRED_DIRS=("mc_data" "backups" "logs" "proxy")
+
+# Default git branch
+DEFAULT_BRANCH="main"
+
+# Flags
+SKIP_GIT_PULL=false
+SKIP_BUILD=false
+FIRST_RUN=false
+
+#
+# Utility Functions
+#
+
+setup_colors() {
+    if [[ -t 1 ]] && [[ "${TERM:-}" != "dumb" ]]; then
+        RED='\033[0;31m'
+        GREEN='\033[0;32m'
+        YELLOW='\033[1;33m'
+        BLUE='\033[0;34m'
+        CYAN='\033[0;36m'
+        BOLD='\033[1m'
+        NC='\033[0m'
+    else
+        RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' NC=''
+    fi
+}
+
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step()    { echo -e "\n${CYAN}${BOLD}==> $1${NC}"; }
+
+command_exists() {
+    command -v "$1" &>/dev/null
+}
+
+#
+# Platform Detection
+#
+
+detect_platform() {
+    PLATFORM="unknown"
+    DOCKER_SOCKET="/var/run/docker.sock"
+    NEEDS_DOCKER_GID=true
+    DOCKER_COMPOSE_CMD=""
+
+    case "$(uname -s)" in
+        Linux*)
+            PLATFORM="linux"
+            if grep -qEi "(microsoft|wsl)" /proc/version 2>/dev/null; then
+                PLATFORM="wsl"
+                if [[ -S "/mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.sock" ]]; then
+                    DOCKER_SOCKET="/mnt/wsl/docker-desktop/shared-sockets/guest-services/docker.sock"
+                    NEEDS_DOCKER_GID=false
+                fi
+            fi
+            ;;
+        Darwin*)
+            PLATFORM="macos"
+            NEEDS_DOCKER_GID=false
+            if [[ -S "$HOME/.docker/run/docker.sock" ]]; then
+                DOCKER_SOCKET="$HOME/.docker/run/docker.sock"
+            fi
+            ;;
+        CYGWIN*|MINGW*|MSYS*)
+            PLATFORM="windows_gitbash"
+            NEEDS_DOCKER_GID=false
+            ;;
+    esac
+
+    # Detect docker compose command (v2 vs v1)
+    if docker compose version &>/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    elif command_exists docker-compose; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    fi
+
+    log_info "Platform: ${BOLD}$PLATFORM${NC}"
+}
+
+#
+# Prerequisite Checks
+#
+
+check_prerequisites() {
+    log_step "Checking prerequisites..."
+    local missing=()
+
+    if ! command_exists git; then
+        missing+=("git")
+    else
+        log_success "git $(git --version | cut -d' ' -f3)"
+    fi
+
+    if ! command_exists docker; then
+        missing+=("docker")
+    else
+        log_success "docker $(docker --version | cut -d' ' -f3 | tr -d ',')"
+    fi
+
+    if [[ -z "$DOCKER_COMPOSE_CMD" ]]; then
+        missing+=("docker-compose")
+    else
+        local compose_version
+        compose_version=$($DOCKER_COMPOSE_CMD version --short 2>/dev/null || $DOCKER_COMPOSE_CMD version | head -1)
+        log_success "docker compose $compose_version"
+    fi
+
+    if ! command_exists curl; then
+        missing+=("curl")
+    else
+        log_success "curl available"
+    fi
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing required tools: ${missing[*]}"
+        echo ""
+        case "$PLATFORM" in
+            linux|wsl)
+                echo "  Ubuntu/Debian: sudo apt install ${missing[*]}"
+                echo "  Fedora/RHEL:   sudo dnf install ${missing[*]}"
+                ;;
+            macos)
+                echo "  macOS: brew install ${missing[*]}"
+                ;;
+            windows_gitbash)
+                echo "  Windows: Install Docker Desktop and Git for Windows"
+                ;;
+        esac
+        exit 1
+    fi
+}
+
+check_docker_daemon() {
+    log_step "Checking Docker daemon..."
+
+    if ! docker info &>/dev/null; then
+        log_error "Docker daemon is not running or not accessible"
+        echo ""
+        case "$PLATFORM" in
+            linux)
+                echo "Try starting Docker with:"
+                echo "  sudo systemctl start docker"
+                echo ""
+                echo "If permission denied, add your user to the docker group:"
+                echo "  sudo usermod -aG docker \$USER"
+                echo "  (then log out and back in)"
+                ;;
+            macos)
+                echo "Please start Docker Desktop from your Applications folder."
+                ;;
+            wsl|windows_gitbash)
+                echo "Ensure Docker Desktop is running on Windows."
+                ;;
+        esac
+        exit 1
+    fi
+
+    log_success "Docker daemon is running"
+}
+
+#
+# Git Operations
+#
+
+change_to_script_directory() {
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cd "$SCRIPT_DIR"
+    log_info "Working directory: $SCRIPT_DIR"
+}
+
+git_pull_updates() {
+    log_step "Pulling latest changes from GitHub..."
+
+    if ! git rev-parse --git-dir &>/dev/null; then
+        log_warn "Not a git repository, skipping git pull"
+        return 0
+    fi
+
+    # Check for uncommitted changes
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        log_warn "Uncommitted changes detected"
+        echo "  You have local modifications. Options:"
+        echo "    1. Commit or stash your changes before running this script"
+        echo "    2. Continue anyway (pull may fail if conflicts exist)"
+        echo ""
+        read -p "Continue with git pull? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Skipping git pull"
+            return 0
+        fi
+    fi
+
+    # Fetch and check if we're behind
+    git fetch origin "$DEFAULT_BRANCH" 2>/dev/null || true
+
+    local local_commit remote_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+    remote_commit=$(git rev-parse "origin/$DEFAULT_BRANCH" 2>/dev/null || echo "")
+
+    if [[ -z "$remote_commit" ]]; then
+        log_warn "Could not fetch from remote, continuing with local version"
+        return 0
+    fi
+
+    if [[ "$local_commit" == "$remote_commit" ]]; then
+        log_success "Already up to date"
+        return 0
+    fi
+
+    log_info "Pulling from origin/$DEFAULT_BRANCH..."
+    if git pull origin "$DEFAULT_BRANCH" --ff-only 2>&1; then
+        local new_commit
+        new_commit=$(git rev-parse --short HEAD)
+        log_success "Updated to $new_commit"
+    else
+        log_error "Git pull failed - possible merge conflict"
+        echo ""
+        echo "Please resolve conflicts manually:"
+        echo "  git status"
+        echo "  git diff"
+        exit 1
+    fi
+}
+
+#
+# Environment Setup
+#
+
+setup_directories() {
+    log_step "Setting up directories..."
+
+    for dir in "${REQUIRED_DIRS[@]}"; do
+        if [[ ! -d "$dir" ]]; then
+            mkdir -p "$dir"
+            log_success "Created $dir/"
+        else
+            log_success "$dir/ exists"
+        fi
+    done
+}
+
+update_env_var() {
+    local var_name="$1"
+    local var_value="$2"
+
+    if grep -q "^${var_name}=" .env 2>/dev/null; then
+        if [[ "$PLATFORM" == "macos" ]]; then
+            sed -i '' "s|^${var_name}=.*|${var_name}=${var_value}|" .env
+        else
+            sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" .env
+        fi
+    else
+        echo "${var_name}=${var_value}" >> .env
+    fi
+}
+
+setup_docker_gid() {
+    if [[ "$NEEDS_DOCKER_GID" == true ]]; then
+        # Linux: Get actual docker group ID
+        local current_gid
+        current_gid=$(grep "^DOCKER_GID=" .env 2>/dev/null | cut -d= -f2 || echo "")
+
+        if [[ -z "$current_gid" ]]; then
+            local detected_gid
+            detected_gid=$(getent group docker 2>/dev/null | cut -d: -f3 || echo "")
+
+            if [[ -n "$detected_gid" ]]; then
+                update_env_var "DOCKER_GID" "$detected_gid"
+                log_success "Set DOCKER_GID=$detected_gid (auto-detected)"
+            else
+                log_warn "Could not detect docker group ID"
+                echo "  Set DOCKER_GID manually: stat -c '%g' /var/run/docker.sock"
+            fi
+        else
+            log_success "DOCKER_GID=$current_gid"
+        fi
+    else
+        # macOS/Docker Desktop: Set a default
+        local current_gid
+        current_gid=$(grep "^DOCKER_GID=" .env 2>/dev/null | cut -d= -f2 || echo "")
+
+        if [[ -z "$current_gid" ]]; then
+            update_env_var "DOCKER_GID" "0"
+            log_success "Set DOCKER_GID=0 (Docker Desktop)"
+        else
+            log_success "DOCKER_GID=$current_gid"
+        fi
+    fi
+}
+
+setup_host_data_dir() {
+    local abs_mc_data="$SCRIPT_DIR/mc_data"
+    local current_dir
+    current_dir=$(grep "^HOST_DATA_DIR=" .env 2>/dev/null | cut -d= -f2 || echo "")
+
+    if [[ -z "$current_dir" || "$current_dir" == "./mc_data" || "$current_dir" == "." ]]; then
+        update_env_var "HOST_DATA_DIR" "$abs_mc_data"
+        log_success "Set HOST_DATA_DIR=$abs_mc_data"
+    else
+        log_success "HOST_DATA_DIR=$current_dir"
+    fi
+}
+
+setup_admin_credentials() {
+    log_step "Checking admin credentials..."
+
+    # Source current values
+    local current_user current_pass
+    current_user=$(grep "^ADMIN_USERNAME=" .env 2>/dev/null | cut -d= -f2 || echo "")
+    current_pass=$(grep "^ADMIN_PASSWORD=" .env 2>/dev/null | cut -d= -f2 || echo "")
+
+    # Check if using defaults or empty
+    if [[ "$current_user" == "admin" && "$current_pass" == "changeme" ]] || \
+       [[ -z "$current_user" || -z "$current_pass" ]]; then
+
+        echo ""
+        echo -e "${YELLOW}${BOLD}Admin Panel Credentials Setup${NC}"
+        echo -e "${YELLOW}==============================${NC}"
+
+        if [[ -n "$current_user" ]]; then
+            echo "Current username: $current_user (default)"
+        fi
+        echo ""
+
+        # Username prompt
+        read -p "Enter admin username [$current_user]: " new_user
+        if [[ -z "$new_user" ]]; then
+            new_user="${current_user:-admin}"
+        fi
+
+        # Password prompt
+        local new_pass="" confirm_pass=""
+        while true; do
+            read -s -p "Enter admin password: " new_pass
+            echo ""
+
+            if [[ -z "$new_pass" ]]; then
+                if [[ "$current_pass" != "changeme" && -n "$current_pass" ]]; then
+                    log_info "Keeping existing password"
+                    new_pass="$current_pass"
+                    break
+                else
+                    echo "Password cannot be empty"
+                    continue
+                fi
+            fi
+
+            read -s -p "Confirm password: " confirm_pass
+            echo ""
+
+            if [[ "$new_pass" == "$confirm_pass" ]]; then
+                break
+            else
+                echo "Passwords do not match, try again"
+            fi
+        done
+
+        # Update .env
+        update_env_var "ADMIN_USERNAME" "$new_user"
+        update_env_var "ADMIN_PASSWORD" "$new_pass"
+
+        echo ""
+        log_success "Credentials saved to .env"
+    else
+        log_success "Admin credentials already configured"
+    fi
+}
+
+setup_environment() {
+    log_step "Configuring environment..."
+
+    # Create .env from .env.example if it doesn't exist
+    if [[ ! -f .env ]]; then
+        if [[ -f .env.example ]]; then
+            cp .env.example .env
+            log_success "Created .env from .env.example"
+            FIRST_RUN=true
+        else
+            touch .env
+            log_warn "Created empty .env file"
+            FIRST_RUN=true
+        fi
+    fi
+
+    # Setup each component
+    setup_host_data_dir
+    setup_docker_gid
+    setup_admin_credentials
+}
+
+#
+# Docker Build & Start
+#
+
+docker_build() {
+    log_step "Building Docker containers..."
+
+    if ! $DOCKER_COMPOSE_CMD build 2>&1; then
+        log_error "Docker build failed"
+        echo ""
+        echo "Check the error messages above. Common issues:"
+        echo "  - Network connectivity for downloading packages"
+        echo "  - Dockerfile syntax errors"
+        exit 1
+    fi
+
+    log_success "Containers built successfully"
+}
+
+docker_start() {
+    log_step "Starting containers..."
+
+    # Stop any existing containers first
+    $DOCKER_COMPOSE_CMD down --remove-orphans 2>/dev/null || true
+
+    if ! $DOCKER_COMPOSE_CMD up -d 2>&1; then
+        log_error "Failed to start containers"
+        echo ""
+        echo "Check Docker logs:"
+        echo "  $DOCKER_COMPOSE_CMD logs"
+        exit 1
+    fi
+
+    log_success "Containers started"
+}
+
+wait_for_containers() {
+    log_step "Waiting for containers to be ready..."
+
+    local timeout=$CONTAINER_START_TIMEOUT
+    local elapsed=0
+
+    while [[ $elapsed -lt $timeout ]]; do
+        local admin_status proxy_status
+
+        admin_status=$(docker inspect -f '{{.State.Status}}' "$ADMIN_CONTAINER" 2>/dev/null || echo "not_found")
+        proxy_status=$(docker inspect -f '{{.State.Status}}' "$PROXY_CONTAINER" 2>/dev/null || echo "not_found")
+
+        if [[ "$admin_status" == "running" && "$proxy_status" == "running" ]]; then
+            log_success "All containers running"
+            return 0
+        fi
+
+        printf "\r  Waiting... (%ds) admin=%s proxy=%s" "$elapsed" "$admin_status" "$proxy_status"
+        sleep 1
+        ((elapsed++))
+    done
+
+    echo ""
+    log_error "Containers did not start within ${timeout}s"
+    echo ""
+    echo "Container status:"
+    echo "  mc_admin: $admin_status"
+    echo "  mc_proxy: $proxy_status"
+    echo ""
+    echo "Check logs with:"
+    echo "  $DOCKER_COMPOSE_CMD logs mc_admin"
+    echo "  $DOCKER_COMPOSE_CMD logs mc_proxy"
+    exit 1
+}
+
+#
+# Health Verification
+#
+
+verify_admin_panel() {
+    log_step "Verifying admin panel..."
+
+    local timeout=$HEALTH_CHECK_TIMEOUT
+    local elapsed=0
+    local url="http://localhost:${ADMIN_PORT}"
+
+    while [[ $elapsed -lt $timeout ]]; do
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "$url" 2>/dev/null || echo "000")
+
+        if [[ "$http_code" =~ ^(200|302|401|403)$ ]]; then
+            log_success "Admin panel responding on port $ADMIN_PORT"
+            return 0
+        fi
+
+        printf "\r  Waiting for admin panel... (%ds, HTTP %s)" "$elapsed" "$http_code"
+        sleep $HEALTH_CHECK_INTERVAL
+        ((elapsed += HEALTH_CHECK_INTERVAL))
+    done
+
+    echo ""
+    log_error "Admin panel not responding on port $ADMIN_PORT"
+    echo ""
+    echo "Check container logs: docker logs $ADMIN_CONTAINER"
+    exit 1
+}
+
+verify_proxy_container() {
+    log_step "Verifying proxy container..."
+
+    local proxy_status
+    proxy_status=$(docker inspect -f '{{.State.Status}}' "$PROXY_CONTAINER" 2>/dev/null || echo "not_found")
+
+    if [[ "$proxy_status" != "running" ]]; then
+        log_warn "Proxy container status: $proxy_status"
+        echo "  This may be normal if no Minecraft servers are configured yet"
+    else
+        log_success "Proxy container running"
+    fi
+}
+
+print_summary() {
+    echo ""
+    echo -e "${GREEN}${BOLD}========================================${NC}"
+    echo -e "${GREEN}${BOLD}  Minecraft Server Manager is Ready!${NC}"
+    echo -e "${GREEN}${BOLD}========================================${NC}"
+    echo ""
+    echo -e "  Admin Panel: ${CYAN}http://localhost:${ADMIN_PORT}${NC}"
+    echo ""
+    echo "  Container Status:"
+    $DOCKER_COMPOSE_CMD ps 2>/dev/null || true
+    echo ""
+    echo "  Quick Commands:"
+    echo "    View logs:      $DOCKER_COMPOSE_CMD logs -f"
+    echo "    Stop services:  $DOCKER_COMPOSE_CMD down"
+    echo "    Restart:        $DOCKER_COMPOSE_CMD restart"
+    echo ""
+}
+
+#
+# Help & Arguments
+#
+
+show_help() {
+    cat << 'EOF'
+Minecraft Server Manager - Start Script
+
+Usage: ./start_mcserver [OPTIONS]
+
+Options:
+  --no-pull     Skip git pull (use current local code)
+  --no-build    Skip Docker build (use existing images)
+  --help, -h    Show this help message
+  --version, -v Show version
+
+Description:
+  This script automates the startup process:
+    1. Pulls latest changes from GitHub (main branch)
+    2. Configures environment (.env, directories)
+    3. Prompts for admin credentials (first run)
+    4. Builds Docker containers
+    5. Starts all services
+    6. Verifies everything is healthy
+
+Supported Platforms:
+  - Linux (native Docker)
+  - macOS (Docker Desktop)
+  - Windows (Git Bash or WSL with Docker Desktop)
+
+Examples:
+  ./start_mcserver              # Full startup with git pull
+  ./start_mcserver --no-pull    # Skip git pull, use local code
+  ./start_mcserver --no-build   # Skip build, use existing images
+
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --no-pull)
+                SKIP_GIT_PULL=true
+                shift
+                ;;
+            --no-build)
+                SKIP_BUILD=true
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            --version|-v)
+                echo "start_mcserver v${SCRIPT_VERSION}"
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+        esac
+    done
+}
+
+#
+# Main
+#
+
+main() {
+    setup_colors
+
+    echo ""
+    echo -e "${BOLD}Minecraft Server Manager - Start Script v${SCRIPT_VERSION}${NC}"
+    echo "=================================================="
+
+    change_to_script_directory
+    detect_platform
+
+    check_prerequisites
+    check_docker_daemon
+
+    if [[ "$SKIP_GIT_PULL" != true ]]; then
+        git_pull_updates
+    else
+        log_info "Skipping git pull (--no-pull)"
+    fi
+
+    setup_directories
+    setup_environment
+
+    if [[ "$SKIP_BUILD" != true ]]; then
+        docker_build
+    else
+        log_info "Skipping build (--no-build)"
+    fi
+
+    docker_start
+    wait_for_containers
+
+    verify_admin_panel
+    verify_proxy_container
+
+    print_summary
+}
+
+parse_args "$@"
+main
