@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}MC Server Manager{% endblock %}</title>
     <style>
         * {
@@ -280,5 +281,23 @@
     </div>
 
     {% block scripts %}{% endblock %}
+
+    <script>
+    // Auto-inject CSRF token into all forms
+    (function() {
+        var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        document.querySelectorAll('form').forEach(function(form) {
+            // Skip if form already has a csrf_token input
+            if (form.querySelector('input[name="csrf_token"]')) return;
+            // Only add to forms that POST
+            if (form.method.toUpperCase() !== 'POST') return;
+            var input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'csrf_token';
+            input.value = csrfToken;
+            form.appendChild(input);
+        });
+    })();
+    </script>
 </body>
 </html>

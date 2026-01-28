@@ -192,6 +192,25 @@ def is_player_not_whitelisted(container_name: str, player_name: str) -> bool:
 
 # ============== Minecraft Protocol Helpers ==============
 
+# Maximum packet size to prevent DoS (256KB should be plenty for MC protocol)
+MAX_PACKET_SIZE = 256 * 1024
+
+
+def recv_exact(sock: socket.socket, size: int) -> bytes:
+    """Read exactly 'size' bytes from socket, handling partial reads."""
+    if size > MAX_PACKET_SIZE:
+        raise ValueError(f"Packet size {size} exceeds maximum {MAX_PACKET_SIZE}")
+    data = b''
+    remaining = size
+    while remaining > 0:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            raise ConnectionError("Connection closed while reading")
+        data += chunk
+        remaining -= len(chunk)
+    return data
+
+
 def read_varint(sock: socket.socket) -> Tuple[int, bytes]:
     """Read a VarInt from socket, return (value, raw_bytes)"""
     result = 0
@@ -572,23 +591,23 @@ def handle_status_request(client: socket.socket, handshake: dict, handshake_raw:
 
                 # Read and forward status request from client
                 packet_len, packet_len_raw = read_varint(client)
-                packet_data = client.recv(packet_len)
+                packet_data = recv_exact(client, packet_len)
                 backend.sendall(packet_len_raw + packet_data)
 
                 # Read status response from server and forward to client
                 resp_len, resp_len_raw = read_varint(backend)
-                resp_data = backend.recv(resp_len)
+                resp_data = recv_exact(backend, resp_len)
                 client.sendall(resp_len_raw + resp_data)
 
                 # Handle ping/pong
                 try:
                     client.settimeout(2.0)
                     ping_len, ping_len_raw = read_varint(client)
-                    ping_data = client.recv(ping_len)
+                    ping_data = recv_exact(client, ping_len)
                     backend.sendall(ping_len_raw + ping_data)
 
                     pong_len, pong_len_raw = read_varint(backend)
-                    pong_data = backend.recv(pong_len)
+                    pong_data = recv_exact(backend, pong_len)
                     client.sendall(pong_len_raw + pong_data)
                 except socket.timeout:
                     pass
@@ -604,7 +623,7 @@ def handle_status_request(client: socket.socket, handshake: dict, handshake_raw:
 
         # Server not running — return sleeping message
         packet_len, _ = read_varint(client)
-        packet_data = client.recv(packet_len)
+        packet_data = recv_exact(client, packet_len)
 
         motd = "\u00a77Server is sleeping. \u00a7aConnect to wake it up!"
         response = build_status_response(motd, handshake['protocol_version'])
@@ -613,7 +632,7 @@ def handle_status_request(client: socket.socket, handshake: dict, handshake_raw:
         try:
             client.settimeout(2.0)
             packet_len, _ = read_varint(client)
-            packet_data = client.recv(packet_len)
+            packet_data = recv_exact(client, packet_len)
 
             if len(packet_data) >= 9:
                 payload = struct.unpack('>q', packet_data[1:9])[0]
@@ -651,7 +670,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
     login_raw = b''
     try:
         login_len, login_len_raw = read_varint(client)
-        login_data = client.recv(login_len)
+        login_data = recv_exact(client, login_len)
         login_raw = login_len_raw + login_data
         player_name = parse_login_start(login_data)
         print(f"[Port {port}] Player '{player_name}' connecting")
@@ -776,7 +795,7 @@ def handle_client(client: socket.socket, addr, config: dict, docker_mgr: DockerM
 
         # Read the handshake packet
         packet_len, packet_len_raw = read_varint(client)
-        packet_data = client.recv(packet_len)
+        packet_data = recv_exact(client, packet_len)
 
         # Full raw handshake (length + data)
         handshake_raw = packet_len_raw + packet_data

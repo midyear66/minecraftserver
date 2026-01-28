@@ -7,7 +7,10 @@ import threading
 import zipfile
 import tarfile
 import shutil
+import hashlib
+from collections import defaultdict
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_file
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
 import glob as glob_module
 from dotenv import load_dotenv
@@ -19,8 +22,20 @@ import scheduler
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+# Use SECRET_KEY from env for persistent sessions, or generate one (sessions lost on restart)
+app.secret_key = os.getenv('SECRET_KEY') or hashlib.sha256(
+    f"{os.getenv('ADMIN_USERNAME', 'admin')}:{os.getenv('ADMIN_PASSWORD', 'changeme')}".encode()
+).digest()
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # CSRF tokens don't expire (session-bound)
+
+# CSRF protection
+csrf = CSRFProtect(app)
+
+# Login rate limiting: track failed attempts by IP
+_login_attempts = defaultdict(list)
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 300  # 5 minutes
 
 # Configuration
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
@@ -238,6 +253,14 @@ def detect_server_version(data_path):
     return 'LATEST'
 
 
+def is_safe_path(basedir, path):
+    """Check if path is safely within basedir (no traversal)."""
+    # Resolve to absolute path and check it's within basedir
+    abs_basedir = os.path.abspath(basedir)
+    abs_path = os.path.abspath(os.path.join(basedir, path))
+    return abs_path.startswith(abs_basedir + os.sep) or abs_path == abs_basedir
+
+
 def extract_archive(file, dest_path):
     """Extract a ZIP or tar.gz archive to the destination path."""
     filename = file.filename.lower()
@@ -246,44 +269,73 @@ def extract_archive(file, dest_path):
     temp_path = os.path.join('/tmp', secure_filename(file.filename))
     file.save(temp_path)
 
+    def get_root_folder(names):
+        """Detect if archive has a single root folder."""
+        if not names:
+            return None
+        first_part = names[0].split('/')[0]
+        if all(n == first_part or n.startswith(first_part + '/') for n in names if n):
+            return first_part
+        return None
+
     try:
         if filename.endswith('.zip'):
             with zipfile.ZipFile(temp_path, 'r') as zf:
-                # Check if archive has a single root directory
                 names = zf.namelist()
-                if names and all(n.startswith(names[0].split('/')[0] + '/') for n in names if n):
-                    # Single root folder - extract contents to dest
-                    root_folder = names[0].split('/')[0]
-                    for member in zf.namelist():
-                        if member.startswith(root_folder + '/'):
-                            # Strip the root folder from the path
-                            relative_path = member[len(root_folder) + 1:]
-                            if relative_path:
-                                target_path = os.path.join(dest_path, relative_path)
-                                if member.endswith('/'):
-                                    os.makedirs(target_path, exist_ok=True)
-                                else:
-                                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                                    with zf.open(member) as src, open(target_path, 'wb') as dst:
-                                        dst.write(src.read())
-                else:
-                    zf.extractall(dest_path)
+                root_folder = get_root_folder(names)
+
+                for member in zf.namelist():
+                    # Strip root folder if present
+                    if root_folder and member.startswith(root_folder + '/'):
+                        relative_path = member[len(root_folder) + 1:]
+                    elif root_folder and member == root_folder:
+                        continue
+                    else:
+                        relative_path = member
+
+                    if not relative_path:
+                        continue
+
+                    # Security: validate path is safe
+                    if not is_safe_path(dest_path, relative_path):
+                        raise ValueError(f'Unsafe path in archive: {member}')
+
+                    target_path = os.path.join(dest_path, relative_path)
+                    if member.endswith('/'):
+                        os.makedirs(target_path, exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with zf.open(member) as src, open(target_path, 'wb') as dst:
+                            dst.write(src.read())
+
         elif filename.endswith('.tar.gz') or filename.endswith('.tgz'):
             with tarfile.open(temp_path, 'r:gz') as tf:
-                # Check if archive has a single root directory
                 names = tf.getnames()
-                if names and all(n.startswith(names[0].split('/')[0] + '/') or n == names[0].split('/')[0] for n in names):
-                    root_folder = names[0].split('/')[0]
-                    for member in tf.getmembers():
-                        if member.name.startswith(root_folder + '/') or member.name == root_folder:
-                            # Strip the root folder from the path
-                            if member.name == root_folder:
-                                continue
-                            member.name = member.name[len(root_folder) + 1:]
-                            if member.name:
-                                tf.extract(member, dest_path)
-                else:
-                    tf.extractall(dest_path)
+                root_folder = get_root_folder(names)
+
+                for member in tf.getmembers():
+                    # Security: reject symlinks and hardlinks
+                    if member.issym() or member.islnk():
+                        raise ValueError(f'Archive contains unsafe link: {member.name}')
+
+                    # Strip root folder if present
+                    if root_folder and member.name.startswith(root_folder + '/'):
+                        relative_path = member.name[len(root_folder) + 1:]
+                    elif root_folder and member.name == root_folder:
+                        continue
+                    else:
+                        relative_path = member.name
+
+                    if not relative_path:
+                        continue
+
+                    # Security: validate path is safe
+                    if not is_safe_path(dest_path, relative_path):
+                        raise ValueError(f'Unsafe path in archive: {member.name}')
+
+                    # Update member name and extract
+                    member.name = relative_path
+                    tf.extract(member, dest_path)
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -650,16 +702,38 @@ def login_required(f):
 
 
 @app.route('/login', methods=['GET', 'POST'])
+@csrf.exempt  # Login form doesn't have CSRF token yet
 def login():
+    client_ip = request.remote_addr
+
+    # Check rate limiting
+    now = time.time()
+    attempts = _login_attempts[client_ip]
+    # Remove attempts older than lockout period
+    attempts[:] = [t for t in attempts if now - t < LOGIN_LOCKOUT_SECONDS]
+
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        remaining = int(LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
+        flash(f'Too many failed attempts. Try again in {remaining} seconds.', 'error')
+        return render_template('login.html')
+
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
 
         if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
             session['logged_in'] = True
+            # Clear failed attempts on successful login
+            _login_attempts.pop(client_ip, None)
             return redirect(url_for('dashboard'))
         else:
-            flash('Invalid credentials', 'error')
+            # Record failed attempt
+            _login_attempts[client_ip].append(now)
+            remaining_attempts = LOGIN_MAX_ATTEMPTS - len(_login_attempts[client_ip])
+            if remaining_attempts > 0:
+                flash(f'Invalid credentials. {remaining_attempts} attempts remaining.', 'error')
+            else:
+                flash(f'Too many failed attempts. Locked out for {LOGIN_LOCKOUT_SECONDS // 60} minutes.', 'error')
 
     return render_template('login.html')
 
@@ -2034,17 +2108,29 @@ def api_logs():
 @login_required
 def download_log(filename):
     """Download a log file"""
-    # Validate filename to prevent directory traversal
-    if not filename.startswith('usage-') or not filename.endswith('.log'):
+    # Security: use basename to prevent path traversal, reject any slashes
+    safe_filename = os.path.basename(filename)
+    if safe_filename != filename or '/' in filename or '\\' in filename:
         flash('Invalid log file', 'error')
         return redirect(url_for('logs'))
 
-    log_path = os.path.join(LOGS_DIR, filename)
+    # Validate filename format
+    if not safe_filename.startswith('usage-') or not safe_filename.endswith('.log'):
+        flash('Invalid log file', 'error')
+        return redirect(url_for('logs'))
+
+    log_path = os.path.join(LOGS_DIR, safe_filename)
+
+    # Security: verify resolved path is within LOGS_DIR
+    if not os.path.abspath(log_path).startswith(os.path.abspath(LOGS_DIR) + os.sep):
+        flash('Invalid log file', 'error')
+        return redirect(url_for('logs'))
+
     if not os.path.isfile(log_path):
         flash('Log file not found', 'error')
         return redirect(url_for('logs'))
 
-    return send_file(log_path, as_attachment=True, download_name=filename)
+    return send_file(log_path, as_attachment=True, download_name=safe_filename)
 
 
 @app.route('/notifications', methods=['GET', 'POST'])
