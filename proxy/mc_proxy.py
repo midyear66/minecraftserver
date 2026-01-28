@@ -24,6 +24,10 @@ PROXY_STATE_PATH = '/app/config/proxy_state.json'
 LOGS_DIR = '/app/logs'
 MC_DATA_DIR = '/mc_data'
 
+# Backend host - use 'host.docker.internal' on macOS/Windows Docker Desktop
+# when proxy runs in bridge mode instead of host network mode
+BACKEND_HOST = os.environ.get('BACKEND_HOST', '127.0.0.1')
+
 
 # ============== Usage Logging ==============
 
@@ -430,7 +434,7 @@ class DockerManager:
                 try:
                     test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     test_sock.settimeout(2)
-                    test_sock.connect(('127.0.0.1', internal_port))
+                    test_sock.connect((BACKEND_HOST, internal_port))
                     test_sock.close()
                     return True
                 except:
@@ -561,7 +565,7 @@ def handle_status_request(client: socket.socket, handshake: dict, handshake_raw:
             try:
                 backend = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 backend.settimeout(5)
-                backend.connect(('127.0.0.1', internal_port))
+                backend.connect((BACKEND_HOST, internal_port))
 
                 # Forward handshake
                 backend.sendall(handshake_raw)
@@ -737,7 +741,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         # Connect to the actual server via localhost
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.settimeout(10)
-        server.connect(('127.0.0.1', internal_port))
+        server.connect((BACKEND_HOST, internal_port))
         server.settimeout(None)
 
         # Forward the handshake and login packets we already received
