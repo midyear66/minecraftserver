@@ -512,6 +512,9 @@ def login_required(f):
     @functools.wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('logged_in'):
+            # Return JSON error for API endpoints
+            if request.path.startswith('/api/'):
+                return jsonify({'error': 'Authentication required'}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -1458,7 +1461,7 @@ def upload_mod(port):
 @app.route('/servers/<int:port>/mods/delete', methods=['POST'])
 @login_required
 def delete_mod(port):
-    """Remove an installed mod/plugin .jar."""
+    """Remove an installed mod/plugin .jar and its auto-download source."""
     server, config = get_server_by_port(port)
     if not server:
         flash('Server not found', 'error')
@@ -1471,9 +1474,43 @@ def delete_mod(port):
 
     server_type = server.get('type', 'VANILLA')
     mod_dir = 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods'
-    filepath = os.path.join(MC_DATA_DIR, server['container_name'], mod_dir, filename)
+    mod_path = os.path.join(MC_DATA_DIR, server['container_name'], mod_dir)
+    filepath = os.path.join(mod_path, filename)
 
     if os.path.isfile(filepath):
+        # Check if this mod was from an auto-download source
+        source_info = scheduler.get_mod_source(mod_path, filename)
+        if source_info:
+            # Remove from auto-download config
+            source_type = source_info.get('type')
+            source_id = source_info.get('id')
+
+            # Find server index in config for updating
+            config = load_config()
+            for i, srv in enumerate(config.get('servers', [])):
+                if int(srv.get('external_port', 0)) == port:
+                    env = srv.setdefault('env', {})
+
+                    if source_type == 'modrinth':
+                        current = env.get('MODRINTH_PROJECTS', '')
+                        projects = [p.strip() for p in current.split(',') if p.strip()]
+                        if source_id in projects:
+                            projects.remove(source_id)
+                            env['MODRINTH_PROJECTS'] = ','.join(projects)
+
+                    elif source_type == 'spiget':
+                        current = env.get('SPIGET_RESOURCES', '')
+                        resources = [r.strip() for r in current.split(',') if r.strip()]
+                        if source_id in resources:
+                            resources.remove(source_id)
+                            env['SPIGET_RESOURCES'] = ','.join(resources)
+
+                    save_config(config)
+                    break
+
+            # Remove from tracking file
+            scheduler.remove_mod_source(mod_path, filename)
+
         os.remove(filepath)
         flash(f'Removed {filename}. Restart the server to apply.', 'success')
     else:
@@ -1527,15 +1564,23 @@ def update_mod_config(port):
     config['servers'][server_idx] = server
     save_config(config)
 
-    # Recreate container to apply changes
-    success, was_running = recreate_mc_container(server)
-    if success:
-        msg = 'Mod sources updated and container recreated.'
-        if was_running:
-            msg += ' Server was running and is now stopped.'
-        flash(msg, 'success')
+    # Download mods immediately so they're ready for next server start
+    downloaded, errors, results = scheduler.download_server_mods(server, MC_DATA_DIR)
+
+    if downloaded > 0 or errors > 0:
+        status = get_container_status(server['container_name'])
+        msg = f'Downloaded {downloaded} mod(s)'
+        if errors > 0:
+            msg += f', {errors} error(s)'
+        if status == 'running':
+            msg += '. Restart the server to load new mods.'
+        else:
+            msg += '. Mods ready for next server start.'
+        flash(msg, 'success' if errors == 0 else 'warning')
+    elif modrinth or spiget:
+        flash('Config saved but no mods were downloaded. Check project slugs/IDs.', 'warning')
     else:
-        flash('Mod sources saved but failed to recreate container.', 'error')
+        flash('Mod sources cleared.', 'success')
 
     return redirect(url_for('server_mods', port=port))
 
@@ -1581,8 +1626,54 @@ def search_mods():
             headers={'User-Agent': 'MCServerManager/1.0'},
             timeout=10
         )
+        resp.raise_for_status()
         return jsonify(resp.json())
+    except requests.RequestException as e:
+        return jsonify({'error': f'Modrinth API error: {e}'}), 500
     except Exception as e:
+        return jsonify({'error': f'Search error: {e}'}), 500
+
+
+@app.route('/api/spiget/search')
+@login_required
+def search_spiget():
+    """Proxy Spiget API search for SpigotMC plugins."""
+    query = request.args.get('q', '')
+    page = request.args.get('page', '1')
+    size = request.args.get('size', '20')
+
+    if not query:
+        return jsonify({'error': 'No search query provided'}), 400
+
+    try:
+        resp = requests.get(
+            f'https://api.spiget.org/v2/search/resources/{query}',
+            params={
+                'field': 'name',
+                'size': size,
+                'page': page,
+                'sort': '-downloads',
+            },
+            headers={'User-Agent': 'MCServerManager/1.0'},
+            timeout=10
+        )
+        resp.raise_for_status()
+        resources = resp.json()
+
+        # Transform to a consistent format
+        results = []
+        for r in resources:
+            results.append({
+                'id': r.get('id'),
+                'name': r.get('name', 'Unknown'),
+                'tag': r.get('tag', ''),
+                'downloads': r.get('downloads', 0),
+                'rating': r.get('rating', {}).get('average', 0),
+                'icon_url': f"https://api.spiget.org/v2/resources/{r.get('id')}/icon" if r.get('icon', {}).get('data') else None,
+            })
+
+        return jsonify({'results': results})
+    except requests.RequestException as e:
         return jsonify({'error': str(e)}), 500
 
 

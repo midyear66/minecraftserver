@@ -40,83 +40,104 @@
 </div>
 {% endif %}
 
-<!-- Upload Section -->
-<div class="card">
-    <h2>Upload {{ 'Plugin' if server_type in ('PAPER', 'SPIGOT') else 'Mod' }}</h2>
-    <form method="POST" action="{{ url_for('upload_mod', port=server.external_port) }}" enctype="multipart/form-data">
+<!-- Search Tiles Row -->
+<div class="tiles-row">
+    <!-- Modrinth Search -->
+    <div class="card tile">
+        <h2>Search Modrinth</h2>
+        <p style="color: #888; margin-bottom: 1rem; font-size: 0.85rem;">
+            {{ 'Plugins' if server_type in ('PAPER', 'SPIGOT') else 'Mods' }} from the Modrinth repository.
+        </p>
         <div class="form-row" style="align-items: flex-end;">
             <div class="form-group" style="flex: 2;">
-                <label for="modfile">Select .jar file</label>
-                <input type="file" id="modfile" name="modfile" accept=".jar"
-                       style="padding: 0.5rem; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; color: #eee;">
+                <label for="modrinth-search">Search</label>
+                <input type="text" id="modrinth-search" placeholder="Search {{ 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods' }}...">
             </div>
             <div class="form-group" style="flex: 0;">
-                <button type="submit" class="btn btn-success">Upload</button>
+                <button type="button" class="clear-search-btn" onclick="clearSearch('modrinth')" title="Clear search">&times;</button>
+            </div>
+            <div class="form-group" style="flex: 0;">
+                <button type="button" class="btn btn-primary" onclick="searchModrinth()">Search</button>
             </div>
         </div>
-        <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
-            Max file size: 100 MB. Files are uploaded to /{{ mod_dir }}/ directory.
-        </p>
-    </form>
-</div>
-
-<!-- Modrinth Search -->
-<div class="card">
-    <h2>Search Modrinth</h2>
-    <p style="color: #888; margin-bottom: 1rem;">
-        Search for {{ 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods' }} on Modrinth and add them to be auto-downloaded on server start.
-    </p>
-    <div class="form-row" style="align-items: flex-end;">
-        <div class="form-group" style="flex: 2;">
-            <label for="modrinth-search">Search</label>
-            <input type="text" id="modrinth-search" placeholder="Search {{ 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods' }}...">
-        </div>
-        <div class="form-group" style="flex: 0;">
-            <button type="button" class="btn btn-primary" onclick="searchModrinth()">Search</button>
-        </div>
+        <div id="modrinth-results" style="margin-top: 1rem;"></div>
     </div>
-    <div id="search-results" style="margin-top: 1rem;"></div>
+
+    {% if server_type in ('PAPER', 'SPIGOT') %}
+    <!-- SpigotMC Search -->
+    <div class="card tile">
+        <h2>Search SpigotMC</h2>
+        <p style="color: #888; margin-bottom: 1rem; font-size: 0.85rem;">
+            Plugins from the SpigotMC repository.
+        </p>
+        <div class="form-row" style="align-items: flex-end;">
+            <div class="form-group" style="flex: 2;">
+                <label for="spiget-search">Search</label>
+                <input type="text" id="spiget-search" placeholder="Search plugins...">
+            </div>
+            <div class="form-group" style="flex: 0;">
+                <button type="button" class="clear-search-btn" onclick="clearSearch('spiget')" title="Clear search">&times;</button>
+            </div>
+            <div class="form-group" style="flex: 0;">
+                <button type="button" class="btn btn-primary" onclick="searchSpiget()">Search</button>
+            </div>
+        </div>
+        <div id="spiget-results" style="margin-top: 1rem;"></div>
+    </div>
+    {% endif %}
 </div>
 
-<!-- Auto-Download Sources -->
-<div class="card">
-    <h2>Auto-Download Sources</h2>
-    <p style="color: #888; margin-bottom: 1rem;">
-        Configure {{ 'plugin' if server_type in ('PAPER', 'SPIGOT') else 'mod' }} sources here.
-        Use a scheduled <strong>Update Mods/Plugins</strong> task (on the <a href="{{ url_for('tasks') }}" style="color: #e94560;">Tasks page</a>)
-        to pre-download while the server is stopped, avoiding startup delays.
-    </p>
-    <form method="POST" action="{{ url_for('update_mod_config', port=server.external_port) }}">
-        <div class="form-group">
-            <label for="modrinth_projects">Modrinth Projects</label>
-            <input type="text" id="modrinth_projects" name="modrinth_projects"
-                   value="{{ modrinth_projects }}"
-                   placeholder="project-slug-1,project-slug-2">
+<!-- Upload and Auto-Download Row -->
+<div class="tiles-row">
+    <!-- Upload Section -->
+    <div class="card tile">
+        <h2>Upload {{ 'Plugin' if server_type in ('PAPER', 'SPIGOT') else 'Mod' }}</h2>
+        <p style="color: #888; margin-bottom: 1rem; font-size: 0.85rem;">
+            Upload a .jar file directly to the server.
+        </p>
+        <form method="POST" action="{{ url_for('upload_mod', port=server.external_port) }}" enctype="multipart/form-data">
+            <div class="form-row" style="align-items: flex-end;">
+                <div class="form-group" style="flex: 2;">
+                    <label for="modfile">Select .jar file</label>
+                    <input type="file" id="modfile" name="modfile" accept=".jar"
+                           style="padding: 0.5rem; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; color: #eee;">
+                </div>
+                <div class="form-group" style="flex: 0;">
+                    <button type="submit" class="btn btn-success">Upload</button>
+                </div>
+            </div>
             <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
-                Comma-separated Modrinth project slugs or IDs. Use the search above to find projects.
+                Max file size: 100 MB. Files go to /{{ mod_dir }}/
             </p>
-        </div>
+        </form>
+    </div>
 
-        {% if server_type in ('PAPER', 'SPIGOT') %}
-        <div class="form-group">
-            <label for="spiget_resources">SpigotMC Resources</label>
-            <input type="text" id="spiget_resources" name="spiget_resources"
-                   value="{{ spiget_resources }}"
-                   placeholder="1234,5678">
-            <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
-                Comma-separated SpigotMC resource IDs. Find the ID in the URL: spigotmc.org/resources/NAME.<strong>ID</strong>/
-            </p>
-        </div>
-        {% endif %}
+    <!-- Auto-Download Sources -->
+    <div class="card tile">
+        <h2>Auto-Download Sources</h2>
+        <p style="color: #888; margin-bottom: 1rem; font-size: 0.85rem;">
+            {{ 'Plugins' if server_type in ('PAPER', 'SPIGOT') else 'Mods' }} are downloaded immediately when you save.
+        </p>
+        <form method="POST" action="{{ url_for('update_mod_config', port=server.external_port) }}">
+            <div class="form-group">
+                <label for="modrinth_projects">Modrinth Projects</label>
+                <input type="text" id="modrinth_projects" name="modrinth_projects"
+                       value="{{ modrinth_projects }}"
+                       placeholder="project-slug-1,project-slug-2">
+            </div>
 
-        <div style="border-color: #ffc107; border: 1px solid; border-radius: 4px; padding: 1rem; margin-bottom: 1rem;">
-            <p style="color: #ffc107; margin: 0;">
-                Saving will recreate the container. If the server is running, it will be stopped.
-            </p>
-        </div>
+            {% if server_type in ('PAPER', 'SPIGOT') %}
+            <div class="form-group">
+                <label for="spiget_resources">SpigotMC Resources</label>
+                <input type="text" id="spiget_resources" name="spiget_resources"
+                       value="{{ spiget_resources }}"
+                       placeholder="1234,5678">
+            </div>
+            {% endif %}
 
-        <button type="submit" class="btn btn-primary">Save & Recreate Container</button>
-    </form>
+            <button type="submit" class="btn btn-primary">Save & Download</button>
+        </form>
+    </div>
 </div>
 
 <!-- Installed Mods/Plugins -->
@@ -166,10 +187,12 @@
 <script>
     const serverType = '{{ server_type }}';
     const modrinthInput = document.getElementById('modrinth_projects');
+    const spigetInput = document.getElementById('spiget_resources');
 
+    // --- Modrinth Search ---
     function searchModrinth() {
         const query = document.getElementById('modrinth-search').value.trim();
-        const resultsDiv = document.getElementById('search-results');
+        const resultsDiv = document.getElementById('modrinth-results');
 
         if (!query) {
             resultsDiv.innerHTML = '<p style="color: #888;">Enter a search term.</p>';
@@ -191,13 +214,18 @@
                     return;
                 }
 
+                // Get currently configured projects to check if already added
+                const currentProjects = modrinthInput.value.trim()
+                    ? modrinthInput.value.split(',').map(p => p.trim().toLowerCase())
+                    : [];
+
                 let html = '<div class="search-results-grid">';
                 data.hits.forEach(hit => {
-                    const downloads = hit.downloads >= 1000000
-                        ? (hit.downloads / 1000000).toFixed(1) + 'M'
-                        : hit.downloads >= 1000
-                            ? (hit.downloads / 1000).toFixed(1) + 'K'
-                            : hit.downloads;
+                    const downloads = formatDownloads(hit.downloads);
+                    const isAdded = currentProjects.includes(hit.slug.toLowerCase());
+                    const addButton = isAdded
+                        ? '<span class="btn btn-secondary btn-sm" style="cursor: default;">Added</span>'
+                        : `<button class="btn btn-success btn-sm" onclick="addModrinthProject('${escapeHtml(hit.slug)}')">Add</button>`;
 
                     html += `
                         <div class="search-result-item">
@@ -207,7 +235,7 @@
                                 <div class="result-desc">${escapeHtml(hit.description || '').substring(0, 100)}${hit.description && hit.description.length > 100 ? '...' : ''}</div>
                             </div>
                             <div class="result-actions">
-                                <button class="btn btn-success btn-sm" onclick="addProject('${escapeHtml(hit.slug)}')">Add</button>
+                                ${addButton}
                                 <a href="https://modrinth.com/project/${hit.slug}" target="_blank" class="btn btn-secondary btn-sm">View</a>
                             </div>
                         </div>
@@ -221,7 +249,7 @@
             });
     }
 
-    function addProject(slug) {
+    function addModrinthProject(slug) {
         const current = modrinthInput.value.trim();
         const projects = current ? current.split(',').map(p => p.trim()).filter(p => p) : [];
 
@@ -233,12 +261,106 @@
         projects.push(slug);
         modrinthInput.value = projects.join(',');
 
-        // Visual feedback
-        const btn = event.target;
-        btn.textContent = 'Added';
-        btn.disabled = true;
-        btn.classList.remove('btn-success');
-        btn.classList.add('btn-secondary');
+        // Clear search input and results
+        clearSearch('modrinth');
+    }
+
+    // --- Spiget Search ---
+    function searchSpiget() {
+        const query = document.getElementById('spiget-search').value.trim();
+        const resultsDiv = document.getElementById('spiget-results');
+
+        if (!query) {
+            resultsDiv.innerHTML = '<p style="color: #888;">Enter a search term.</p>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '<p style="color: #888;">Searching...</p>';
+
+        fetch('/api/spiget/search?q=' + encodeURIComponent(query))
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    resultsDiv.innerHTML = '<p style="color: #dc3545;">Error: ' + data.error + '</p>';
+                    return;
+                }
+
+                if (!data.results || data.results.length === 0) {
+                    resultsDiv.innerHTML = '<p style="color: #888;">No results found.</p>';
+                    return;
+                }
+
+                // Get currently configured resources to check if already added
+                const currentResources = spigetInput && spigetInput.value.trim()
+                    ? spigetInput.value.split(',').map(r => r.trim())
+                    : [];
+
+                let html = '<div class="search-results-grid">';
+                data.results.forEach(res => {
+                    const downloads = formatDownloads(res.downloads);
+                    const resourceId = String(res.id);
+                    const isAdded = currentResources.includes(resourceId);
+                    const addButton = isAdded
+                        ? '<span class="btn btn-secondary btn-sm" style="cursor: default;">Added</span>'
+                        : `<button class="btn btn-success btn-sm" onclick="addSpigetResource('${resourceId}')">Add</button>`;
+
+                    html += `
+                        <div class="search-result-item">
+                            <div class="result-info">
+                                <div class="result-title">${escapeHtml(res.name)}</div>
+                                <div class="result-meta">${downloads} downloads</div>
+                                <div class="result-desc">${escapeHtml(res.tag || '').substring(0, 100)}</div>
+                            </div>
+                            <div class="result-actions">
+                                ${addButton}
+                                <a href="https://www.spigotmc.org/resources/${res.id}/" target="_blank" class="btn btn-secondary btn-sm">View</a>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                resultsDiv.innerHTML = html;
+            })
+            .catch(err => {
+                resultsDiv.innerHTML = '<p style="color: #dc3545;">Search failed: ' + err + '</p>';
+            });
+    }
+
+    function addSpigetResource(resourceId) {
+        if (!spigetInput) return;
+
+        const current = spigetInput.value.trim();
+        const resources = current ? current.split(',').map(r => r.trim()).filter(r => r) : [];
+
+        if (resources.includes(resourceId)) {
+            alert('Resource ' + resourceId + ' is already in the list.');
+            return;
+        }
+
+        resources.push(resourceId);
+        spigetInput.value = resources.join(',');
+
+        // Clear search input and results
+        clearSearch('spiget');
+    }
+
+    // --- Shared Functions ---
+    function clearSearch(type) {
+        if (type === 'modrinth') {
+            document.getElementById('modrinth-search').value = '';
+            document.getElementById('modrinth-results').innerHTML = '';
+        } else if (type === 'spiget') {
+            const searchInput = document.getElementById('spiget-search');
+            const resultsDiv = document.getElementById('spiget-results');
+            if (searchInput) searchInput.value = '';
+            if (resultsDiv) resultsDiv.innerHTML = '';
+        }
+    }
+
+    function formatDownloads(count) {
+        if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
+        if (count >= 1000) return (count / 1000).toFixed(1) + 'K';
+        return count;
     }
 
     function escapeHtml(text) {
@@ -255,9 +377,68 @@
             searchModrinth();
         }
     });
+
+    // Spiget search on Enter key (if element exists)
+    const spigetSearchInput = document.getElementById('spiget-search');
+    if (spigetSearchInput) {
+        spigetSearchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchSpiget();
+            }
+        });
+    }
 </script>
 
 <style>
+    .tiles-row {
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .tile {
+        flex: 1;
+        min-width: 0;
+        margin-bottom: 0;
+    }
+
+    @media (max-width: 900px) {
+        .tiles-row {
+            flex-direction: column;
+        }
+
+        .tile {
+            margin-bottom: 1.5rem;
+        }
+
+        .tiles-row:last-of-type .tile:last-child {
+            margin-bottom: 0;
+        }
+    }
+
+    .clear-search-btn {
+        width: 36px;
+        height: 36px;
+        border: 1px solid #0f3460;
+        border-radius: 50%;
+        background: #1a1a2e;
+        color: #888;
+        font-size: 1.25rem;
+        line-height: 1;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .clear-search-btn:hover {
+        background: #dc3545;
+        border-color: #dc3545;
+        color: #fff;
+    }
+
     .search-results-grid {
         display: flex;
         flex-direction: column;

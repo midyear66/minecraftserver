@@ -413,6 +413,9 @@ def _download_modrinth_project(project_slug, mod_path, server_type):
             for chunk in dl_resp.iter_content(chunk_size=8192):
                 f.write(chunk)
 
+        # Record the source for later tracking
+        _record_mod_source(mod_path, filename, 'modrinth', project_slug)
+
         return True, f"{filename} downloaded"
 
     except requests.RequestException as e:
@@ -480,6 +483,9 @@ def _download_spiget_resource(resource_id, mod_path):
             for chunk in dl_resp.iter_content(chunk_size=8192):
                 f.write(chunk)
 
+        # Record the source for later tracking
+        _record_mod_source(mod_path, filename, 'spiget', resource_id)
+
         return True, f"{filename} downloaded"
 
     except requests.RequestException as e:
@@ -496,6 +502,105 @@ def _remove_old_versions(mod_path, project_slug):
     # We can't reliably match old versions without tracking them
     # For now, just let new files coexist (user can manually clean up)
     pass
+
+
+def _load_mod_sources(mod_path):
+    """Load the mod sources metadata file."""
+    import os
+    import json
+
+    meta_file = os.path.join(mod_path, '.mod_sources.json')
+    if os.path.exists(meta_file):
+        try:
+            with open(meta_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _save_mod_sources(mod_path, sources):
+    """Save the mod sources metadata file."""
+    import os
+    import json
+
+    meta_file = os.path.join(mod_path, '.mod_sources.json')
+    with open(meta_file, 'w') as f:
+        json.dump(sources, f, indent=2)
+
+
+def _record_mod_source(mod_path, filename, source_type, source_id):
+    """Record that a file was downloaded from a specific source."""
+    sources = _load_mod_sources(mod_path)
+    sources[filename] = {'type': source_type, 'id': source_id}
+    _save_mod_sources(mod_path, sources)
+
+
+def get_mod_source(mod_path, filename):
+    """Get the source info for a downloaded mod file.
+
+    Returns dict with 'type' (modrinth/spiget) and 'id' (slug/resource_id),
+    or None if not tracked.
+    """
+    sources = _load_mod_sources(mod_path)
+    return sources.get(filename)
+
+
+def remove_mod_source(mod_path, filename):
+    """Remove a mod from the sources tracking file."""
+    sources = _load_mod_sources(mod_path)
+    if filename in sources:
+        del sources[filename]
+        _save_mod_sources(mod_path, sources)
+
+
+def download_server_mods(server, mc_data_dir):
+    """Download all configured mods/plugins for a server.
+
+    Called by app.py when admin updates mod config.
+    Returns (downloaded_count, error_count, results_list).
+    """
+    import os
+
+    container_name = server['container_name']
+    server_type = server.get('type', 'VANILLA')
+    env = server.get('env', {})
+
+    # Determine directory
+    mod_dir_name = 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods'
+    mod_path = os.path.join(mc_data_dir, container_name, mod_dir_name)
+    os.makedirs(mod_path, exist_ok=True)
+
+    results = []
+    downloaded = 0
+    errors = 0
+
+    # Download from Modrinth
+    modrinth_projects = env.get('MODRINTH_PROJECTS', '')
+    if modrinth_projects:
+        projects = [p.strip() for p in modrinth_projects.split(',') if p.strip()]
+        for project_slug in projects:
+            success, msg = _download_modrinth_project(project_slug, mod_path, server_type)
+            if success:
+                downloaded += 1
+            else:
+                errors += 1
+            results.append(f"Modrinth/{project_slug}: {msg}")
+
+    # Download from Spiget (Paper/Spigot only)
+    if server_type in ('PAPER', 'SPIGOT'):
+        spiget_resources = env.get('SPIGET_RESOURCES', '')
+        if spiget_resources:
+            resources = [r.strip() for r in spiget_resources.split(',') if r.strip()]
+            for resource_id in resources:
+                success, msg = _download_spiget_resource(resource_id, mod_path)
+                if success:
+                    downloaded += 1
+                else:
+                    errors += 1
+                results.append(f"Spiget/{resource_id}: {msg}")
+
+    return downloaded, errors, results
 
 
 # --- Task execution dispatch ---
