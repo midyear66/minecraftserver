@@ -59,55 +59,78 @@ BOOLEAN_ENV_VARS = {'PVP', 'ONLINE_MODE', 'ALLOW_NETHER', 'ENABLE_COMMAND_BLOCK'
 INTEGER_ENV_VARS = {'MAX_PLAYERS', 'SPAWN_PROTECTION', 'VIEW_DISTANCE'}
 
 
+def get_default_config():
+    """Return the default configuration structure"""
+    return {
+        'timeout': 5,
+        'auto_shutdown': True,
+        'servers': [],
+        'scheduled_tasks': [],
+        'notifications': {
+            'email': {
+                'enabled': False,
+                'smtp_host': '',
+                'smtp_port': 587,
+                'smtp_tls': True,
+                'smtp_user': '',
+                'smtp_password': '',
+                'from_address': '',
+                'to_addresses': [],
+                'events': {
+                    'server_start': True,
+                    'server_stop': True,
+                    'player_join': False,
+                    'player_leave': False,
+                    'unauthorized_login': False
+                }
+            },
+            'pushover': {
+                'enabled': False,
+                'user_key': '',
+                'app_token': '',
+                'priority': 0,
+                'events': {
+                    'server_start': True,
+                    'server_stop': True,
+                    'player_join': False,
+                    'player_leave': False,
+                    'unauthorized_login': False
+                }
+            }
+        }
+    }
+
+
 def load_config():
-    """Load proxy configuration from config.json"""
+    """Load proxy configuration from config.json, creating default if missing"""
     try:
         with open(CONFIG_PATH, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
-        return {
-            'timeout': 5,
-            'auto_shutdown': True,
-            'servers': [],
-            'notifications': {
-                'email': {
-                    'enabled': False,
-                    'smtp_host': '',
-                    'smtp_port': 587,
-                    'smtp_tls': True,
-                    'smtp_user': '',
-                    'smtp_password': '',
-                    'from_address': '',
-                    'to_addresses': [],
-                    'events': {
-                        'server_start': True,
-                        'server_stop': True,
-                        'player_join': False,
-                        'player_leave': False,
-                        'unauthorized_login': False
-                    }
-                },
-                'pushover': {
-                    'enabled': False,
-                    'user_key': '',
-                    'app_token': '',
-                    'priority': 0,
-                    'events': {
-                        'server_start': True,
-                        'server_stop': True,
-                        'player_join': False,
-                        'player_leave': False,
-                        'unauthorized_login': False
-                    }
-                }
-            }
-        }
+        # Create default config file on first run
+        default_config = get_default_config()
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, 'w') as f:
+                json.dump(default_config, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not create default config file: {e}")
+        return default_config
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in config file: {e}")
+        return get_default_config()
 
 
 def save_config(config):
     """Save proxy configuration to config.json"""
-    with open(CONFIG_PATH, 'w') as f:
-        json.dump(config, f, indent=2)
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving config: {e}")
+        raise
 
 
 def restart_proxy():
@@ -263,7 +286,7 @@ def create_mc_container(server_config):
     container_name = server_config['container_name']
     internal_port = int(server_config['internal_port'])
 
-    # Host path for data
+    # Host path for data (HOST_DATA_DIR must be absolute path on host)
     data_path = os.path.join(HOST_DATA_DIR, container_name)
 
     # Environment variables for itzg/minecraft-server
@@ -636,8 +659,8 @@ def create_server():
         'memory': memory,
     }
 
-    # Create host data directory
-    data_path = os.path.join(HOST_DATA_DIR, container_name)
+    # Create server data directory (inside container mount)
+    data_path = os.path.join(MC_DATA_DIR, container_name)
     os.makedirs(data_path, exist_ok=True)
 
     # Create Docker container
@@ -647,9 +670,13 @@ def create_server():
         flash(f'Failed to create container: {e}', 'error')
         return redirect(url_for('dashboard'))
 
-    # Add to config
+    # Add to config and save
     config.setdefault('servers', []).append(server_config)
-    save_config(config)
+    try:
+        save_config(config)
+    except Exception as e:
+        flash(f'Server container created but failed to save config: {e}', 'error')
+        return redirect(url_for('dashboard'))
 
     # Restart proxy to pick up new server
     if restart_proxy():

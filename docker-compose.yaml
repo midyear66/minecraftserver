@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
     user: "1000:1000"
     group_add:
-      - "117"
+      - "${DOCKER_GID:-999}"
     ports:
       - "8080:8080"
     volumes:
