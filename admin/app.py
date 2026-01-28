@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import docker
 import requests
 import backup_manager
+import scheduler
 
 load_dotenv()
 
@@ -172,16 +173,22 @@ def _fetch_mojang_versions():
 
 
 def _fetch_paper_versions():
-    """Fetch versions from the PaperMC API."""
+    """Fetch stable versions from the PaperMC Fill v3 API."""
     resp = requests.get(
-        'https://papermc.io/api/v2/projects/paper',
+        'https://fill.papermc.io/v3/projects/paper',
+        headers={'User-Agent': 'MCServerManager/1.0'},
         timeout=10
     )
     resp.raise_for_status()
     data = resp.json()
-    versions = data.get('versions', [])
-    versions.reverse()
-    return versions[:MAX_VERSIONS]
+    version_groups = data.get('versions', {})
+    # Flatten groups (already newest-first) and filter out pre-releases
+    all_versions = []
+    for group_versions in version_groups.values():
+        for v in group_versions:
+            if '-' not in v:
+                all_versions.append(v)
+    return all_versions[:MAX_VERSIONS]
 
 
 def _fetch_fabric_versions():
@@ -1658,9 +1665,166 @@ def test_notification(service):
         return jsonify({'success': False, 'message': 'Unknown service'})
 
 
+# --- Scheduled Tasks routes ---
+
+@app.route('/tasks')
+@login_required
+def tasks():
+    config = load_config()
+    all_tasks = config.get('scheduled_tasks', [])
+    servers = config.get('servers', [])
+
+    # Build a port -> name lookup
+    server_names = {}
+    for srv in servers:
+        server_names[int(srv.get('external_port', 0))] = srv.get('name', 'Unknown')
+
+    # Enrich tasks for the template
+    enriched = []
+    for t in all_tasks:
+        entry = dict(t)
+        entry['server_name'] = server_names.get(t.get('server_port', 0), 'Unknown')
+        entry['type_label'] = scheduler.TASK_TYPES.get(t['type'], t['type'])
+        if t['schedule_type'] == 'preset':
+            preset = scheduler.SCHEDULE_PRESETS.get(t['schedule_value'], {})
+            entry['preset_label'] = preset.get('label', t['schedule_value'])
+        enriched.append(entry)
+
+    return render_template('tasks.html',
+                          tasks=enriched,
+                          servers=servers,
+                          task_types=scheduler.TASK_TYPES,
+                          presets=scheduler.SCHEDULE_PRESETS)
+
+
+@app.route('/tasks/create', methods=['POST'])
+@login_required
+def create_task():
+    task_type = request.form.get('type', '')
+    server_port = request.form.get('server_port', type=int)
+    schedule_type = request.form.get('schedule_type', 'preset')
+    schedule_value = request.form.get('schedule_value', '').strip()
+    enabled = request.form.get('enabled') == 'on'
+
+    if task_type not in scheduler.TASK_TYPES:
+        flash('Invalid task type', 'error')
+        return redirect(url_for('tasks'))
+
+    # Validate server exists
+    config = load_config()
+    if not _find_server_by_port(config, server_port):
+        flash('Server not found', 'error')
+        return redirect(url_for('tasks'))
+
+    # Validate schedule
+    if schedule_type == 'cron':
+        if not schedule_value or not scheduler.validate_cron(schedule_value):
+            flash('Invalid cron expression. Use 5-field format: minute hour day month weekday', 'error')
+            return redirect(url_for('tasks'))
+    elif schedule_type == 'preset':
+        if schedule_value not in scheduler.SCHEDULE_PRESETS:
+            flash('Invalid schedule preset', 'error')
+            return redirect(url_for('tasks'))
+    else:
+        flash('Invalid schedule type', 'error')
+        return redirect(url_for('tasks'))
+
+    # Build type-specific config
+    task_config = {}
+    if task_type == 'version_check':
+        task_config['action'] = request.form.get('vc_action', 'notify')
+        if task_config['action'] not in ('notify', 'auto_update'):
+            task_config['action'] = 'notify'
+        task_config['auto_restart'] = request.form.get('vc_auto_restart') == 'on'
+    elif task_type == 'command':
+        task_config['command'] = request.form.get('mc_command', '').strip()
+        if not task_config['command']:
+            flash('Command is required', 'error')
+            return redirect(url_for('tasks'))
+    elif task_type == 'broadcast':
+        task_config['message'] = request.form.get('bc_message', '').strip()
+        if not task_config['message']:
+            flash('Message is required', 'error')
+            return redirect(url_for('tasks'))
+
+    task = {
+        'enabled': enabled,
+        'server_port': server_port,
+        'type': task_type,
+        'schedule_type': schedule_type,
+        'schedule_value': schedule_value,
+        'config': task_config,
+    }
+
+    scheduler.add_task(task)
+    flash(f'Scheduled task created: {scheduler.TASK_TYPES[task_type]}', 'success')
+    return redirect(url_for('tasks'))
+
+
+@app.route('/tasks/<task_id>/toggle', methods=['POST'])
+@login_required
+def toggle_task(task_id):
+    config = load_config()
+    current_task = None
+    for t in config.get('scheduled_tasks', []):
+        if t['id'] == task_id:
+            current_task = t
+            break
+
+    if not current_task:
+        flash('Task not found', 'error')
+        return redirect(url_for('tasks'))
+
+    new_enabled = not current_task.get('enabled', False)
+    scheduler.toggle_task(task_id, new_enabled)
+    flash(f'Task {"enabled" if new_enabled else "disabled"}', 'success')
+    return redirect(url_for('tasks'))
+
+
+@app.route('/tasks/<task_id>/delete', methods=['POST'])
+@login_required
+def delete_task(task_id):
+    scheduler.remove_task(task_id)
+    flash('Scheduled task deleted', 'success')
+    return redirect(url_for('tasks'))
+
+
+@app.route('/tasks/<task_id>/run', methods=['POST'])
+@login_required
+def run_task(task_id):
+    config = load_config()
+    found = any(t['id'] == task_id for t in config.get('scheduled_tasks', []))
+    if not found:
+        flash('Task not found', 'error')
+        return redirect(url_for('tasks'))
+
+    scheduler.run_task_now(task_id)
+    flash('Task triggered — check back for results', 'success')
+    return redirect(url_for('tasks'))
+
+
+def _find_server_by_port(config, port):
+    """Look up a server config entry by external port (for task routes)."""
+    for srv in config.get('servers', []):
+        if int(srv.get('external_port', 0)) == port:
+            return srv
+    return None
+
+
 # Initialize auto-backup scheduler on startup
 _startup_config = load_config()
 backup_manager.init_auto_backups(_startup_config, get_backup_dir_name, send_mc_command, get_container_status)
+
+scheduler.init_scheduler(
+    load_config_fn=load_config,
+    save_config_fn=save_config,
+    get_container_status_fn=get_container_status,
+    send_mc_command_fn=send_mc_command,
+    stop_mc_container_fn=stop_mc_container,
+    start_mc_container_fn=start_mc_container,
+    recreate_mc_container_fn=recreate_mc_container,
+    get_versions_for_type_fn=get_versions_for_type,
+)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)

@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}Scheduled Tasks - MC Server Manager{% endblock %}
+
+{% block content %}
+<h1>Scheduled Tasks</h1>
+
+<div class="card">
+    <h2>Active Tasks</h2>
+    {% if tasks %}
+    <table>
+        <thead>
+            <tr>
+                <th>Server</th>
+                <th>Type</th>
+                <th>Schedule</th>
+                <th>Last Run</th>
+                <th>Result</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr>
+                <td>{{ task.server_name }}</td>
+                <td>{{ task.type_label }}</td>
+                <td>
+                    {% if task.schedule_type == 'preset' %}
+                        {{ task.preset_label }}
+                    {% else %}
+                        <code>{{ task.schedule_value }}</code>
+                    {% endif %}
+                </td>
+                <td>{{ task.last_run or 'Never' }}</td>
+                <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                    title="{{ task.last_result or '' }}">
+                    {{ task.last_result or '-' }}
+                </td>
+                <td>
+                    {% if task.enabled %}
+                    <span class="status-badge status-running">Enabled</span>
+                    {% else %}
+                    <span class="status-badge status-stopped">Disabled</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="actions">
+                        <form method="POST" action="{{ url_for('toggle_task', task_id=task.id) }}" class="inline-form">
+                            <button type="submit" class="btn btn-sm {% if task.enabled %}btn-secondary{% else %}btn-success{% endif %}">
+                                {{ 'Disable' if task.enabled else 'Enable' }}
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('run_task', task_id=task.id) }}" class="inline-form">
+                            <button type="submit" class="btn btn-secondary btn-sm">Run Now</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_task', task_id=task.id) }}" class="inline-form"
+                              onsubmit="return confirm('Delete this scheduled task?')">
+                            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #888;">No scheduled tasks configured. Create one below.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Create New Task</h2>
+    <form method="POST" action="{{ url_for('create_task') }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="server_port">Server</label>
+                <select id="server_port" name="server_port" required>
+                    {% for srv in servers %}
+                    <option value="{{ srv.external_port }}">{{ srv.name }} (:{{ srv.external_port }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="task_type">Task Type</label>
+                <select id="task_type" name="type" required onchange="updateTaskFields()">
+                    {% for key, label in task_types.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <!-- Version Check config -->
+        <div id="config-version_check" class="task-config">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="vc_action">Action When Update Found</label>
+                    <select id="vc_action" name="vc_action">
+                        <option value="notify">Notify Only</option>
+                        <option value="auto_update">Auto-Update Server</option>
+                    </select>
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                    <div class="checkbox-group" style="padding-bottom: 0.75rem;">
+                        <input type="checkbox" id="vc_auto_restart" name="vc_auto_restart" checked>
+                        <label for="vc_auto_restart" style="margin: 0;">Auto-restart after update</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Restart config (no extra fields) -->
+        <div id="config-restart" class="task-config" style="display: none;">
+            <p style="color: #888; font-size: 0.85rem; margin-bottom: 1rem;">
+                Stops and restarts the server container. Only runs if the server is currently running.
+            </p>
+        </div>
+
+        <!-- Command config -->
+        <div id="config-command" class="task-config" style="display: none;">
+            <div class="form-group">
+                <label for="mc_command">Minecraft Command</label>
+                <input type="text" id="mc_command" name="mc_command"
+                       placeholder="e.g. save-all, whitelist reload, op PlayerName">
+                <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                    Command runs only if the server is running. Do not include the leading slash.
+                </p>
+            </div>
+        </div>
+
+        <!-- Broadcast config -->
+        <div id="config-broadcast" class="task-config" style="display: none;">
+            <div class="form-group">
+                <label for="bc_message">Broadcast Message</label>
+                <input type="text" id="bc_message" name="bc_message"
+                       placeholder="e.g. Server restarts daily at 4 AM!">
+                <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                    Sends an in-game message to all players using the <code>say</code> command.
+                </p>
+            </div>
+        </div>
+
+        <!-- Schedule -->
+        <div class="form-group">
+            <label>Schedule</label>
+            <div style="display: flex; gap: 1.5rem; margin-bottom: 0.75rem;">
+                <div class="checkbox-group">
+                    <input type="radio" id="sched_preset" name="schedule_type" value="preset" checked
+                           onchange="updateScheduleFields()">
+                    <label for="sched_preset" style="margin: 0;">Preset</label>
+                </div>
+                <div class="checkbox-group">
+                    <input type="radio" id="sched_cron" name="schedule_type" value="cron"
+                           onchange="updateScheduleFields()">
+                    <label for="sched_cron" style="margin: 0;">Custom Cron</label>
+                </div>
+            </div>
+        </div>
+
+        <div id="schedule-preset" class="form-group">
+            <label for="preset_value">Preset Schedule</label>
+            <select id="preset_value" name="schedule_value">
+                {% for key, preset in presets.items() %}
+                <option value="{{ key }}">{{ preset.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="schedule-cron" class="form-group" style="display: none;">
+            <label for="cron_value">Cron Expression</label>
+            <input type="text" id="cron_value" name="cron_value"
+                   placeholder="*/30 * * * *">
+            <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
+                Format: <code>minute hour day month weekday</code> &mdash;
+                e.g. <code>0 4 * * *</code> = daily at 4 AM,
+                <code>*/30 * * * *</code> = every 30 minutes
+            </p>
+        </div>
+
+        <div class="form-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="task_enabled" name="enabled" checked>
+                <label for="task_enabled" style="margin: 0;">Enable this task</label>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Create Task</button>
+    </form>
+</div>
+
+<style>
+    .task-config {
+        border-left: 3px solid #0f3460;
+        padding-left: 1rem;
+        margin-bottom: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateTaskFields() {
+    var type = document.getElementById('task_type').value;
+    var configs = document.querySelectorAll('.task-config');
+    configs.forEach(function(el) { el.style.display = 'none'; });
+
+    var target = document.getElementById('config-' + type);
+    if (target) {
+        target.style.display = 'block';
+    }
+}
+
+function updateScheduleFields() {
+    var isPreset = document.getElementById('sched_preset').checked;
+    document.getElementById('schedule-preset').style.display = isPreset ? 'block' : 'none';
+    document.getElementById('schedule-cron').style.display = isPreset ? 'none' : 'block';
+}
+
+// Handle form submission to set the right schedule_value
+document.querySelector('form[action*="create"]').addEventListener('submit', function(e) {
+    var schedType = document.querySelector('input[name="schedule_type"]:checked').value;
+    if (schedType === 'cron') {
+        var cronInput = document.getElementById('cron_value');
+        // Copy cron value to a hidden input or the preset select
+        // We need schedule_value to hold the cron expression
+        var presetSelect = document.getElementById('preset_value');
+        presetSelect.name = '_unused_preset';
+        cronInput.name = 'schedule_value';
+    } else {
+        var cronInput = document.getElementById('cron_value');
+        var presetSelect = document.getElementById('preset_value');
+        presetSelect.name = 'schedule_value';
+        cronInput.name = '_unused_cron';
+    }
+});
+
+// Initialize visibility on page load
+updateTaskFields();
+updateScheduleFields();
+</script>
+{% endblock %}
