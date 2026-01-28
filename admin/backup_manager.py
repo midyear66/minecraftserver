@@ -8,6 +8,13 @@ from datetime import datetime
 BACKUPS_DIR = '/backups'
 MC_DATA_DIR = '/mc_data'
 
+
+def _is_safe_path(basedir, path):
+    """Check if path is safely within basedir (no traversal)."""
+    abs_basedir = os.path.abspath(basedir)
+    abs_path = os.path.abspath(os.path.join(basedir, path))
+    return abs_path.startswith(abs_basedir + os.sep) or abs_path == abs_basedir
+
 # Directories/files to exclude from backups (large, regenerated on start)
 EXCLUDE_DIRS = {'libraries', 'versions', '.cache', 'logs', 'cache'}
 
@@ -187,8 +194,16 @@ def restore_backup(backup_name, container_name, filename, stop_fn, start_fn, get
 
     try:
         with tarfile.open(filepath, 'r:gz') as tar:
+            # Security: validate all members before extracting
             for member in tar.getmembers():
+                # Reject symlinks and hardlinks
+                if member.issym() or member.islnk():
+                    return False, 'Backup archive contains unsafe links'
+                # Reject absolute paths and path traversal
                 if member.name.startswith('/') or '..' in member.name:
+                    return False, 'Backup archive contains unsafe paths'
+                # Verify resolved path stays within MC_DATA_DIR
+                if not _is_safe_path(MC_DATA_DIR, member.name):
                     return False, 'Backup archive contains unsafe paths'
             tar.extractall(path=MC_DATA_DIR)
 

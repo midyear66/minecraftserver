@@ -147,7 +147,10 @@
 
         fetch('/api/console/' + port + '/command', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            },
             body: JSON.stringify({ command: command })
         })
         .then(response => response.json())

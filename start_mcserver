@@ -426,11 +426,44 @@ setup_macos_networking() {
     if [[ "$PLATFORM" != "linux" ]]; then
         log_step "Configuring networking for $PLATFORM..."
 
+        # Collect ports: read from config.json if exists, plus default range
+        local ports=()
+        local config_file="proxy/config.json"
+
+        # Add ports from existing config
+        if [[ -f "$config_file" ]]; then
+            # Extract external_port values from config
+            local config_ports
+            config_ports=$(grep -o '"external_port":[[:space:]]*[0-9]*' "$config_file" 2>/dev/null | grep -o '[0-9]*' || true)
+            for p in $config_ports; do
+                ports+=("$p")
+            done
+        fi
+
+        # Add default range 25565-25574 (10 ports)
+        for p in $(seq 25565 25574); do
+            # Add if not already in list
+            if [[ ! " ${ports[*]} " =~ " $p " ]]; then
+                ports+=("$p")
+            fi
+        done
+
+        # Sort and deduplicate
+        local sorted_ports
+        sorted_ports=$(printf '%s\n' "${ports[@]}" | sort -n | uniq)
+
+        # Build port mappings
+        local port_mappings=""
+        for p in $sorted_ports; do
+            port_mappings="${port_mappings}      - \"${p}:${p}\"\n"
+        done
+
         # Create docker-compose.override.yml for non-Linux platforms
-        cat > docker-compose.override.yml << 'OVERRIDE_EOF'
+        cat > docker-compose.override.yml << OVERRIDE_EOF
 # Auto-generated for macOS/Windows compatibility
 # network_mode: host doesn't work on Docker Desktop
 # This file maps Minecraft ports explicitly
+# Re-run ./start_mcserver after adding servers on new ports
 
 services:
   mc_proxy:
@@ -439,17 +472,13 @@ services:
       # Use Docker Desktop's special hostname to reach host machine
       - BACKEND_HOST=host.docker.internal
     ports:
-      # Minecraft server ports (add more if needed)
-      - "25565:25565"
-      - "25566:25566"
-      - "25567:25567"
-      - "25568:25568"
-      - "25569:25569"
-      - "25570:25570"
+      # Minecraft server ports
+$(echo -e "$port_mappings")
 OVERRIDE_EOF
 
         log_success "Created docker-compose.override.yml for $PLATFORM"
-        log_info "Minecraft ports 25565-25570 will be available on host"
+        log_info "Configured ports: $(echo $sorted_ports | tr '\n' ' ')"
+        log_info "Re-run ./start_mcserver after adding servers on new ports"
     else
         # On Linux, remove override if it exists (use native host networking)
         if [[ -f docker-compose.override.yml ]]; then

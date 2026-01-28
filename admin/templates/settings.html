@@ -235,7 +235,8 @@ function testNotification(service) {
     fetch('/notifications/test/' + service, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
         }
     })
     .then(response => response.json())
