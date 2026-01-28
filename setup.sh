@@ -33,6 +33,18 @@ else
     echo "DOCKER_GID already set in .env"
 fi
 
+# Auto-detect and set HOST_DATA_DIR to absolute path
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ABSOLUTE_MC_DATA="$SCRIPT_DIR/mc_data"
+if ! grep -q "^HOST_DATA_DIR=" .env || grep -q "^HOST_DATA_DIR=\./mc_data" .env || [ -z "$(grep "^HOST_DATA_DIR=" .env | cut -d= -f2)" ]; then
+    grep -v "^HOST_DATA_DIR=" .env > .env.tmp || true
+    mv .env.tmp .env
+    echo "HOST_DATA_DIR=$ABSOLUTE_MC_DATA" >> .env
+    echo "Set HOST_DATA_DIR=$ABSOLUTE_MC_DATA (auto-detected)"
+else
+    echo "HOST_DATA_DIR already set in .env"
+fi
+
 # Create required directories
 mkdir -p mc_data backups logs proxy
 echo "Created required directories"

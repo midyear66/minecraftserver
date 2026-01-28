@@ -286,7 +286,7 @@ def create_mc_container(server_config):
     container_name = server_config['container_name']
     internal_port = int(server_config['internal_port'])
 
-    # Host path for data
+    # Host path for data (HOST_DATA_DIR must be absolute path on host)
     data_path = os.path.join(HOST_DATA_DIR, container_name)
 
     # Environment variables for itzg/minecraft-server
