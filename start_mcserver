@@ -435,6 +435,9 @@ setup_macos_networking() {
 services:
   mc_proxy:
     network_mode: bridge
+    environment:
+      # Use Docker Desktop's special hostname to reach host machine
+      - BACKEND_HOST=host.docker.internal
     ports:
       # Minecraft server ports (add more if needed)
       - "25565:25565"
