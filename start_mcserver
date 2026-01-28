@@ -419,6 +419,43 @@ setup_environment() {
     setup_admin_credentials
 }
 
+setup_macos_networking() {
+    # On macOS/Windows, network_mode: host doesn't work like Linux
+    # Create an override file to use explicit port mappings instead
+
+    if [[ "$PLATFORM" != "linux" ]]; then
+        log_step "Configuring networking for $PLATFORM..."
+
+        # Create docker-compose.override.yml for non-Linux platforms
+        cat > docker-compose.override.yml << 'OVERRIDE_EOF'
+# Auto-generated for macOS/Windows compatibility
+# network_mode: host doesn't work on Docker Desktop
+# This file maps Minecraft ports explicitly
+
+services:
+  mc_proxy:
+    network_mode: bridge
+    ports:
+      # Minecraft server ports (add more if needed)
+      - "25565:25565"
+      - "25566:25566"
+      - "25567:25567"
+      - "25568:25568"
+      - "25569:25569"
+      - "25570:25570"
+OVERRIDE_EOF
+
+        log_success "Created docker-compose.override.yml for $PLATFORM"
+        log_info "Minecraft ports 25565-25570 will be available on host"
+    else
+        # On Linux, remove override if it exists (use native host networking)
+        if [[ -f docker-compose.override.yml ]]; then
+            rm docker-compose.override.yml
+            log_info "Removed override file (using native host networking)"
+        fi
+    fi
+}
+
 #
 # Docker Build & Start
 #
@@ -645,6 +682,7 @@ main() {
 
     setup_directories
     setup_environment
+    setup_macos_networking
 
     if [[ "$SKIP_BUILD" != true ]]; then
         docker_build
