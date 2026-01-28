@@ -670,6 +670,13 @@ def create_server():
         flash(f'Failed to create container: {e}', 'error')
         return redirect(url_for('dashboard'))
 
+    # Start the container immediately so it's ready when players connect
+    try:
+        start_mc_container(container_name)
+    except Exception as e:
+        # Non-fatal - container exists, just couldn't start
+        print(f"Warning: Could not auto-start container: {e}")
+
     # Add to config and save
     config.setdefault('servers', []).append(server_config)
     try:
