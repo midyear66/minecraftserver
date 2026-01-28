@@ -1,5 +1,7 @@
 # Minecraft Server Manager
 
+> **Note:** This project was entirely vibe-coded with [Claude](https://claude.ai). I built it for my own use to manage Minecraft servers for friends and family, but figured others might find it useful too. Expect rough edges and opinionated decisions -- PRs welcome!
+
 A Docker-based platform for managing multiple Minecraft servers with a protocol-aware proxy and web admin panel.
 
 ## Features
