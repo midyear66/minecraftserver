@@ -3,6 +3,7 @@
 
 # Proxy runtime config (contains API keys, managed via admin UI)
 proxy/config.json
+proxy/proxy_state.json
 
 # Runtime data directories
 mc_data/*
