@@ -7,7 +7,9 @@ A Docker-based platform for managing multiple Minecraft servers with a protocol-
 - **Protocol-Aware Proxy** -- Distinguishes between status pings and login attempts. Servers start on-demand when a player connects and shut down automatically after a configurable idle timeout.
 - **Web Admin Panel** -- Dashboard for managing servers, viewing console output, managing players, configuring notifications, and handling backups.
 - **Multi-Server Support** -- Run multiple Minecraft servers (Vanilla, Paper, Spigot, Fabric, Forge) on different ports, each in an isolated Docker container.
-- **Notifications** -- Pushover and email notifications for server start/stop and player join/leave events, configured through the admin UI.
+- **Mod/Plugin Management** -- Upload mods/plugins directly, or configure auto-download from Modrinth and SpigotMC. Schedule updates to run while servers are stopped to avoid startup delays.
+- **Scheduled Tasks** -- Automate version checks, server restarts, commands, broadcasts, and mod updates on custom schedules.
+- **Notifications** -- Pushover and email notifications for server start/stop, player join/leave, and unauthorized login attempts.
 - **Backup Management** -- Create, schedule, and restore server backups through the admin panel.
 - **Crafty Controller Migration** -- Import existing servers from Crafty Controller using the included migration script.
 
@@ -75,9 +77,10 @@ Server configuration and notification settings are managed entirely through the 
 ```
 minecraftserver/
 ├── admin/                  # Flask web admin panel
-│   ├── app.py              # Main application
+│   ├── app.py              # Main application and routes
 │   ├── backup_manager.py   # Backup create/restore/schedule
-│   ├── templates/          # HTML templates
+│   ├── scheduler.py        # Scheduled task system (APScheduler)
+│   ├── templates/          # Jinja2 HTML templates
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── proxy/                  # Protocol-aware Minecraft proxy
@@ -94,6 +97,31 @@ minecraftserver/
 ├── .env.example            # Environment variable template
 └── FUTURE.md               # Bedrock & crossplay roadmap
 ```
+
+## Scheduled Tasks
+
+The admin panel includes a task scheduler for automating server maintenance:
+
+| Task Type | Description |
+|-----------|-------------|
+| **Version Check** | Check for newer Minecraft versions. Optionally auto-update and restart. |
+| **Scheduled Restart** | Stop and restart the server on a schedule. |
+| **Run Command** | Execute a Minecraft command (e.g., `save-all`, `whitelist reload`). |
+| **Broadcast Message** | Send an in-game message to all players. |
+| **Update Mods/Plugins** | Download mods from Modrinth and plugins from Spiget. |
+
+Tasks can use preset schedules (hourly, daily, weekly) or custom cron expressions.
+
+## Mod/Plugin Management
+
+For Paper, Spigot, Fabric, and Forge servers, the admin panel provides mod/plugin management:
+
+- **Direct Upload** -- Upload `.jar` files directly to the server's mods/plugins directory.
+- **Modrinth Integration** -- Search and add mods/plugins from Modrinth by project slug.
+- **SpigotMC Integration** -- Add plugins by SpigotMC resource ID (Paper/Spigot only).
+- **Scheduled Updates** -- Use the "Update Mods/Plugins" scheduled task to pre-download mods while the server is stopped, avoiding startup delays.
+
+Access mod management from the "Mods" or "Plugins" button on the dashboard (only shown for modded server types).
 
 ## Migration from Crafty Controller
 

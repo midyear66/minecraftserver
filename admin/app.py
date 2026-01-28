@@ -5,6 +5,7 @@ import time
 import functools
 import threading
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_file
+from werkzeug.utils import secure_filename
 import glob as glob_module
 from dotenv import load_dotenv
 import docker
@@ -16,6 +17,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max upload
 
 # Configuration
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
@@ -1363,6 +1365,227 @@ def api_backup_status(port):
     })
 
 
+# --- Mod/Plugin routes ---
+
+# Server types that support mods/plugins
+MODDED_SERVER_TYPES = {'PAPER', 'SPIGOT', 'FABRIC', 'FORGE'}
+
+
+@app.route('/servers/<int:port>/mods')
+@login_required
+def server_mods(port):
+    """Mod/plugin management page."""
+    server, config = get_server_by_port(port)
+    if not server:
+        flash('Server not found', 'error')
+        return redirect(url_for('dashboard'))
+
+    server_type = server.get('type', 'VANILLA')
+    status = get_container_status(server['container_name'])
+
+    # Determine directory name based on server type
+    mod_dir = 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods'
+    mod_path = os.path.join(MC_DATA_DIR, server['container_name'], mod_dir)
+
+    # List installed mods/plugins (.jar files)
+    installed = []
+    if os.path.isdir(mod_path):
+        for f in sorted(os.listdir(mod_path)):
+            if f.endswith('.jar'):
+                full = os.path.join(mod_path, f)
+                stat = os.stat(full)
+                size_kb = stat.st_size / 1024
+                if size_kb >= 1024:
+                    size_human = f'{size_kb / 1024:.1f} MB'
+                else:
+                    size_human = f'{size_kb:.1f} KB'
+                installed.append({
+                    'name': f,
+                    'size': stat.st_size,
+                    'size_human': size_human,
+                    'modified': time.strftime('%Y-%m-%d %H:%M', time.localtime(stat.st_mtime)),
+                })
+
+    # Get env-based mod lists from config
+    env = server.get('env', {})
+
+    return render_template('mods.html',
+        server=server,
+        status=status,
+        server_type=server_type,
+        mod_dir=mod_dir,
+        installed=installed,
+        spiget_resources=env.get('SPIGET_RESOURCES', ''),
+        modrinth_projects=env.get('MODRINTH_PROJECTS', ''),
+        is_modded=server_type in MODDED_SERVER_TYPES,
+    )
+
+
+@app.route('/servers/<int:port>/mods/upload', methods=['POST'])
+@login_required
+def upload_mod(port):
+    """Upload a .jar mod/plugin file."""
+    server, config = get_server_by_port(port)
+    if not server:
+        flash('Server not found', 'error')
+        return redirect(url_for('dashboard'))
+
+    file = request.files.get('modfile')
+    if not file or not file.filename:
+        flash('No file selected', 'error')
+        return redirect(url_for('server_mods', port=port))
+
+    if not file.filename.endswith('.jar'):
+        flash('Only .jar files are allowed', 'error')
+        return redirect(url_for('server_mods', port=port))
+
+    server_type = server.get('type', 'VANILLA')
+    mod_dir = 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods'
+    mod_path = os.path.join(MC_DATA_DIR, server['container_name'], mod_dir)
+
+    os.makedirs(mod_path, exist_ok=True)
+    filename = secure_filename(file.filename)
+    if not filename.endswith('.jar'):
+        filename += '.jar'
+
+    filepath = os.path.join(mod_path, filename)
+    file.save(filepath)
+
+    flash(f'Uploaded {filename}. Restart the server to load it.', 'success')
+    return redirect(url_for('server_mods', port=port))
+
+
+@app.route('/servers/<int:port>/mods/delete', methods=['POST'])
+@login_required
+def delete_mod(port):
+    """Remove an installed mod/plugin .jar."""
+    server, config = get_server_by_port(port)
+    if not server:
+        flash('Server not found', 'error')
+        return redirect(url_for('dashboard'))
+
+    filename = request.form.get('filename', '')
+    if not filename or '..' in filename or '/' in filename or '\\' in filename:
+        flash('Invalid filename', 'error')
+        return redirect(url_for('server_mods', port=port))
+
+    server_type = server.get('type', 'VANILLA')
+    mod_dir = 'plugins' if server_type in ('PAPER', 'SPIGOT') else 'mods'
+    filepath = os.path.join(MC_DATA_DIR, server['container_name'], mod_dir, filename)
+
+    if os.path.isfile(filepath):
+        os.remove(filepath)
+        flash(f'Removed {filename}. Restart the server to apply.', 'success')
+    else:
+        flash('File not found', 'error')
+
+    return redirect(url_for('server_mods', port=port))
+
+
+@app.route('/servers/<int:port>/mods/config', methods=['POST'])
+@login_required
+def update_mod_config(port):
+    """Update env-based mod/plugin sources (Modrinth, Spiget, etc.)."""
+    config = load_config()
+
+    server_idx = None
+    server = None
+    for i, srv in enumerate(config.get('servers', [])):
+        if int(srv.get('external_port', 0)) == port:
+            server_idx = i
+            server = srv
+            break
+
+    if server is None:
+        flash('Server not found', 'error')
+        return redirect(url_for('dashboard'))
+
+    env = server.get('env', {})
+    server_type = server.get('type', 'VANILLA')
+
+    spiget = request.form.get('spiget_resources', '').strip()
+    modrinth = request.form.get('modrinth_projects', '').strip()
+
+    # Only allow SPIGET_RESOURCES for Paper/Spigot
+    if server_type in ('PAPER', 'SPIGOT'):
+        if spiget:
+            env['SPIGET_RESOURCES'] = spiget
+        else:
+            env.pop('SPIGET_RESOURCES', None)
+
+    # MODRINTH_PROJECTS works for all modded types
+    if modrinth:
+        env['MODRINTH_PROJECTS'] = modrinth
+    else:
+        env.pop('MODRINTH_PROJECTS', None)
+
+    if env:
+        server['env'] = env
+    elif 'env' in server:
+        del server['env']
+
+    config['servers'][server_idx] = server
+    save_config(config)
+
+    # Recreate container to apply changes
+    success, was_running = recreate_mc_container(server)
+    if success:
+        msg = 'Mod sources updated and container recreated.'
+        if was_running:
+            msg += ' Server was running and is now stopped.'
+        flash(msg, 'success')
+    else:
+        flash('Mod sources saved but failed to recreate container.', 'error')
+
+    return redirect(url_for('server_mods', port=port))
+
+
+@app.route('/api/mods/search')
+@login_required
+def search_mods():
+    """Proxy Modrinth API search to avoid CORS issues."""
+    query = request.args.get('q', '')
+    server_type = request.args.get('type', '').upper()
+    offset = request.args.get('offset', '0')
+
+    # Map server types to Modrinth loaders
+    loader_map = {
+        'PAPER': 'paper',
+        'SPIGOT': 'spigot',
+        'FABRIC': 'fabric',
+        'FORGE': 'forge',
+    }
+
+    loader = loader_map.get(server_type, '')
+
+    params = {
+        'query': query,
+        'limit': 20,
+        'offset': offset,
+        'index': 'relevance',
+    }
+
+    # Build facets for filtering
+    if loader:
+        if server_type in ('PAPER', 'SPIGOT'):
+            # Plugins
+            params['facets'] = f'[["project_type:plugin"],["categories:{loader}"]]'
+        else:
+            # Mods
+            params['facets'] = f'[["project_type:mod"],["categories:{loader}"]]'
+
+    try:
+        resp = requests.get(
+            'https://api.modrinth.com/v2/search',
+            params=params,
+            headers={'User-Agent': 'MCServerManager/1.0'},
+            timeout=10
+        )
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/logs')
 @login_required
 def logs():
@@ -1824,6 +2047,7 @@ scheduler.init_scheduler(
     start_mc_container_fn=start_mc_container,
     recreate_mc_container_fn=recreate_mc_container,
     get_versions_for_type_fn=get_versions_for_type,
+    mc_data_dir=MC_DATA_DIR,
 )
 
 if __name__ == '__main__':

@@ -141,6 +141,21 @@
             </div>
         </div>
 
+        <!-- Mod Update config -->
+        <div id="config-mod_update" class="task-config" style="display: none;">
+            <p style="color: #888; font-size: 0.85rem; margin-bottom: 0.75rem;">
+                Downloads/updates mods from Modrinth and plugins from Spiget directly to the server's
+                mods/plugins folder. This avoids startup delays from container-based downloads.
+            </p>
+            <p style="color: #888; font-size: 0.85rem; margin-bottom: 0.75rem;">
+                Configure mod sources on the server's <strong>Mods/Plugins</strong> page
+                (MODRINTH_PROJECTS and SPIGET_RESOURCES).
+            </p>
+            <p style="color: #ffc107; font-size: 0.85rem;">
+                Tip: Schedule this to run while the server is stopped (e.g., daily at 4 AM before players connect).
+            </p>
+        </div>
+
         <!-- Schedule -->
         <div class="form-group">
             <label>Schedule</label>
