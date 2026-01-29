@@ -201,6 +201,22 @@ def get_next_internal_port(config):
     return port
 
 
+def get_next_bluemap_port(config):
+    """Get the next available BlueMap port starting from 8100"""
+    used_ports = {int(s['bluemap_port']) for s in config.get('servers', []) if s.get('bluemap_port')}
+    port = 8100
+    while port in used_ports:
+        port += 1
+    return port
+
+
+# BlueMap plugin URL (Paper/Spigot)
+BLUEMAP_PLUGIN_URL = 'https://cdn.modrinth.com/data/swbUV1cr/versions/WyxMyd9G/bluemap-5.15-paper.jar'
+
+# Server types that support BlueMap plugin
+BLUEMAP_SUPPORTED_TYPES = {'PAPER', 'SPIGOT'}
+
+
 def detect_server_type(data_path):
     """Detect Minecraft server type from files in the data directory."""
     # Check for JAR files that indicate server type
@@ -443,6 +459,7 @@ def create_mc_container(server_config):
     client = get_docker_client()
     container_name = server_config['container_name']
     internal_port = int(server_config['internal_port'])
+    server_type = server_config.get('type', 'VANILLA')
 
     # Host path for data (HOST_DATA_DIR must be absolute path on host)
     data_path = os.path.join(HOST_DATA_DIR, container_name)
@@ -450,12 +467,33 @@ def create_mc_container(server_config):
     # Environment variables for itzg/minecraft-server
     environment = {
         'EULA': 'TRUE',
-        'TYPE': server_config.get('type', 'VANILLA'),
+        'TYPE': server_type,
         'VERSION': server_config.get('version', 'LATEST'),
         'MEMORY': server_config.get('memory', '2G'),
         'ENABLE_QUERY': 'false',
         'ENABLE_RCON': 'false',
     }
+
+    # BlueMap plugin support for Paper/Spigot
+    bluemap_enabled = server_config.get('bluemap_enabled', False)
+    if bluemap_enabled and server_type in BLUEMAP_SUPPORTED_TYPES:
+        # Add BlueMap plugin URL to PLUGINS env var
+        existing_plugins = environment.get('PLUGINS', '')
+        if existing_plugins:
+            environment['PLUGINS'] = existing_plugins + '\n' + BLUEMAP_PLUGIN_URL
+        else:
+            environment['PLUGINS'] = BLUEMAP_PLUGIN_URL
+
+        # Pre-create BlueMap config with accept-download: true
+        # This avoids the manual acceptance step on first run
+        # Use MC_DATA_DIR (container path) not HOST_DATA_DIR (host path)
+        bluemap_config_dir = os.path.join(MC_DATA_DIR, container_name, 'plugins', 'BlueMap')
+        os.makedirs(bluemap_config_dir, exist_ok=True)
+        bluemap_core_conf = os.path.join(bluemap_config_dir, 'core.conf')
+        if not os.path.exists(bluemap_core_conf):
+            with open(bluemap_core_conf, 'w') as f:
+                f.write('# BlueMap Core Config - auto-generated\n')
+                f.write('accept-download: true\n')
 
     # Merge custom env vars from config (set via edit page)
     custom_env = server_config.get('env', {})
@@ -472,12 +510,20 @@ def create_mc_container(server_config):
         print(f"Pulling itzg/minecraft-server:latest...")
         client.images.pull('itzg/minecraft-server', tag='latest')
 
+    # Port mappings - always expose Minecraft port
+    port_bindings = {'25565/tcp': ('127.0.0.1', internal_port)}
+
+    # Expose BlueMap web interface port if enabled
+    if bluemap_enabled and server_config.get('bluemap_port'):
+        bluemap_port = int(server_config['bluemap_port'])
+        port_bindings['8100/tcp'] = ('0.0.0.0', bluemap_port)
+
     # Create container
     container = client.containers.create(
         'itzg/minecraft-server:latest',
         name=container_name,
         environment=environment,
-        ports={'25565/tcp': ('127.0.0.1', internal_port)},
+        ports=port_bindings,
         volumes={
             data_path: {'bind': '/data', 'mode': 'rw'}
         },
@@ -765,6 +811,8 @@ def dashboard():
             'memory': srv.get('memory', '2G'),
             'running': status == 'running',
             'status': status,
+            'bluemap_enabled': srv.get('bluemap_enabled', False),
+            'bluemap_port': srv.get('bluemap_port'),
         }
         servers.append(server_info)
 
@@ -784,6 +832,7 @@ def create_server():
     server_type = request.form.get('type', 'VANILLA').upper()
     version = request.form.get('version', 'LATEST').strip()
     memory = request.form.get('memory', '2G').strip()
+    bluemap_enabled = request.form.get('bluemap_enabled') == '1'
 
     if not name:
         flash('Server name is required', 'error')
@@ -838,6 +887,11 @@ def create_server():
         'version': version,
         'memory': memory,
     }
+
+    # BlueMap support for Paper/Spigot servers
+    if bluemap_enabled and server_type in BLUEMAP_SUPPORTED_TYPES:
+        server_config['bluemap_enabled'] = True
+        server_config['bluemap_port'] = get_next_bluemap_port(config)
 
     # Create server data directory (inside container mount)
     data_path = os.path.join(MC_DATA_DIR, container_name)
@@ -1086,7 +1140,8 @@ def edit_server(port):
     return render_template('edit_server.html',
                          server=server_entry,
                          status=status,
-                         env_defaults=ENV_DEFAULTS)
+                         env_defaults=ENV_DEFAULTS,
+                         bluemap_supported_types=BLUEMAP_SUPPORTED_TYPES)
 
 
 @app.route('/servers/<int:port>/edit', methods=['POST'])
@@ -1154,13 +1209,31 @@ def update_server(port):
     if server_entry.get('type') != 'PAPER':
         new_env.pop('SPIGET_RESOURCES', None)
 
+    # BlueMap toggle (only for Paper/Spigot)
+    bluemap_enabled = request.form.get('bluemap_enabled') == 'on'
+    old_bluemap = server_entry.get('bluemap_enabled', False)
+    bluemap_changed = False
+
+    if server_entry.get('type') in BLUEMAP_SUPPORTED_TYPES:
+        if bluemap_enabled and not old_bluemap:
+            # Enabling BlueMap - allocate a port
+            server_entry['bluemap_enabled'] = True
+            server_entry['bluemap_port'] = get_next_bluemap_port(config)
+            bluemap_changed = True
+        elif not bluemap_enabled and old_bluemap:
+            # Disabling BlueMap
+            server_entry['bluemap_enabled'] = False
+            # Keep the port in case they re-enable
+            bluemap_changed = True
+
     # Determine what changed
     old_env = server_entry.get('env', {})
     name_changed = new_name != server_entry.get('name', '')
     needs_recreation = (
         new_version != server_entry.get('version', 'LATEST') or
         new_memory != server_entry.get('memory', '2G') or
-        new_env != old_env
+        new_env != old_env or
+        bluemap_changed
     )
 
     # Update config entry
