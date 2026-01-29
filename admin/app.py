@@ -201,6 +201,248 @@ def get_next_internal_port(config):
     return port
 
 
+def get_next_bluemap_port(config):
+    """Get the next available BlueMap port starting from 8100"""
+    used_ports = {int(s['bluemap_port']) for s in config.get('servers', []) if s.get('bluemap_port')}
+    port = 8100
+    while port in used_ports:
+        port += 1
+    return port
+
+
+# BlueMap plugin URL (Paper/Spigot)
+BLUEMAP_PLUGIN_URL = 'https://cdn.modrinth.com/data/swbUV1cr/versions/WyxMyd9G/bluemap-5.15-paper.jar'
+
+# Server types that support BlueMap plugin (runs inside MC server)
+BLUEMAP_PLUGIN_TYPES = {'PAPER', 'SPIGOT'}
+
+# Server types that need standalone BlueMap container (reads world files externally)
+BLUEMAP_STANDALONE_TYPES = {'VANILLA', 'FORGE', 'FABRIC'}
+
+# All server types that support BlueMap (either via plugin or standalone)
+BLUEMAP_SUPPORTED_TYPES = BLUEMAP_PLUGIN_TYPES | BLUEMAP_STANDALONE_TYPES
+
+# BlueMap standalone Docker image
+BLUEMAP_STANDALONE_IMAGE = 'ghcr.io/bluemap-minecraft/bluemap:latest'
+
+
+def get_bluemap_container_name(server_container_name):
+    """Get the BlueMap container name for a server"""
+    return f"{server_container_name}_bluemap"
+
+
+def create_bluemap_standalone_config(server_config):
+    """Create configuration files for standalone BlueMap container"""
+    container_name = server_config['container_name']
+    server_name = server_config.get('name', container_name)
+
+    # Config directory inside admin container's view
+    config_base = os.path.join(MC_DATA_DIR, container_name, 'bluemap-standalone')
+    os.makedirs(os.path.join(config_base, 'maps'), exist_ok=True)
+    os.makedirs(os.path.join(config_base, 'storages'), exist_ok=True)
+
+    # core.conf
+    core_conf = os.path.join(config_base, 'core.conf')
+    if not os.path.exists(core_conf):
+        with open(core_conf, 'w') as f:
+            f.write('# BlueMap Core Config - auto-generated\n')
+            f.write('accept-download: true\n')
+            f.write('data: "data"\n')
+            f.write('render-thread-count: 2\n')
+            f.write('scan-for-mod-resources: true\n')
+            f.write('metrics: true\n')
+
+    # webserver.conf
+    webserver_conf = os.path.join(config_base, 'webserver.conf')
+    if not os.path.exists(webserver_conf):
+        with open(webserver_conf, 'w') as f:
+            f.write('# BlueMap Webserver Config - auto-generated\n')
+            f.write('enabled: true\n')
+            f.write('webroot: "web"\n')
+            f.write('port: 8100\n')
+
+    # webapp.conf
+    webapp_conf = os.path.join(config_base, 'webapp.conf')
+    if not os.path.exists(webapp_conf):
+        with open(webapp_conf, 'w') as f:
+            f.write('# BlueMap Webapp Config - auto-generated\n')
+            f.write('enabled: true\n')
+            f.write('webroot: "web"\n')
+
+    # storages/file.conf
+    storage_conf = os.path.join(config_base, 'storages', 'file.conf')
+    if not os.path.exists(storage_conf):
+        with open(storage_conf, 'w') as f:
+            f.write('# BlueMap Storage Config - auto-generated\n')
+            f.write('storage-type: file\n')
+            f.write('root: "web/maps"\n')
+            f.write('compression: gzip\n')
+
+    # Create map configs for standard dimensions
+    # Overworld
+    overworld_conf = os.path.join(config_base, 'maps', 'overworld.conf')
+    if not os.path.exists(overworld_conf):
+        with open(overworld_conf, 'w') as f:
+            f.write(f'# {server_name} Overworld\n')
+            f.write('world: "world/world"\n')
+            f.write('dimension: "minecraft:overworld"\n')
+            f.write(f'name: "{server_name}"\n')
+            f.write('sorting: 0\n')
+            f.write('sky-color: "#7dabff"\n')
+            f.write('void-color: "#000000"\n')
+            f.write('remove-caves-below-y: 55\n')
+            f.write('enable-perspective-view: true\n')
+            f.write('enable-flat-view: true\n')
+            f.write('enable-free-flight-view: true\n')
+            f.write('enable-hires: true\n')
+            f.write('storage: "file"\n')
+
+    # Nether
+    nether_conf = os.path.join(config_base, 'maps', 'nether.conf')
+    if not os.path.exists(nether_conf):
+        with open(nether_conf, 'w') as f:
+            f.write(f'# {server_name} Nether\n')
+            f.write('world: "world/world"\n')
+            f.write('dimension: "minecraft:the_nether"\n')
+            f.write(f'name: "{server_name} Nether"\n')
+            f.write('sorting: 1\n')
+            f.write('sky-color: "#290000"\n')
+            f.write('void-color: "#150000"\n')
+            f.write('ambient-light: 0.6\n')
+            f.write('remove-caves-below-y: -10000\n')
+            f.write('enable-perspective-view: true\n')
+            f.write('enable-flat-view: true\n')
+            f.write('enable-free-flight-view: true\n')
+            f.write('enable-hires: true\n')
+            f.write('storage: "file"\n')
+
+    # End
+    end_conf = os.path.join(config_base, 'maps', 'end.conf')
+    if not os.path.exists(end_conf):
+        with open(end_conf, 'w') as f:
+            f.write(f'# {server_name} End\n')
+            f.write('world: "world/world"\n')
+            f.write('dimension: "minecraft:the_end"\n')
+            f.write(f'name: "{server_name} End"\n')
+            f.write('sorting: 2\n')
+            f.write('sky-color: "#080010"\n')
+            f.write('void-color: "#080010"\n')
+            f.write('ambient-light: 0.6\n')
+            f.write('remove-caves-below-y: -10000\n')
+            f.write('enable-perspective-view: true\n')
+            f.write('enable-flat-view: true\n')
+            f.write('enable-free-flight-view: true\n')
+            f.write('enable-hires: true\n')
+            f.write('storage: "file"\n')
+
+    return config_base
+
+
+def create_bluemap_standalone_container(server_config):
+    """Create a standalone BlueMap container for a server"""
+    client = get_docker_client()
+    server_container_name = server_config['container_name']
+    bluemap_container_name = get_bluemap_container_name(server_container_name)
+    bluemap_port = int(server_config.get('bluemap_port', 8100))
+
+    # Host paths for volumes
+    server_data_path = os.path.join(HOST_DATA_DIR, server_container_name)
+    bluemap_config_path = os.path.join(server_data_path, 'bluemap-standalone')
+    bluemap_data_path = os.path.join(server_data_path, 'bluemap-data')
+    bluemap_web_path = os.path.join(server_data_path, 'bluemap-web')
+
+    # Create BlueMap config files first
+    create_bluemap_standalone_config(server_config)
+
+    # Pull image if needed
+    try:
+        client.images.get(BLUEMAP_STANDALONE_IMAGE)
+    except docker.errors.ImageNotFound:
+        print(f"Pulling {BLUEMAP_STANDALONE_IMAGE}...")
+        client.images.pull(BLUEMAP_STANDALONE_IMAGE)
+
+    # Remove existing container if present
+    try:
+        old_container = client.containers.get(bluemap_container_name)
+        old_container.remove(force=True)
+    except docker.errors.NotFound:
+        pass
+
+    # Create container with world mounted read-only
+    container = client.containers.create(
+        BLUEMAP_STANDALONE_IMAGE,
+        name=bluemap_container_name,
+        command=['-r', '-u', '-w'],  # render, watch for updates, webserver
+        ports={'8100/tcp': ('0.0.0.0', bluemap_port)},
+        volumes={
+            # World data (read-only)
+            server_data_path: {'bind': '/app/world', 'mode': 'ro'},
+            # BlueMap config
+            bluemap_config_path: {'bind': '/app/config', 'mode': 'rw'},
+            # BlueMap data (render cache)
+            bluemap_data_path: {'bind': '/app/data', 'mode': 'rw'},
+            # BlueMap web files
+            bluemap_web_path: {'bind': '/app/web', 'mode': 'rw'},
+        },
+        labels={
+            'managed_by': 'mc_manager',
+            'bluemap_for': server_container_name,
+        },
+        restart_policy={'Name': 'no'},
+        detach=True,
+    )
+    return container
+
+
+def start_bluemap_standalone(server_container_name):
+    """Start the standalone BlueMap container for a server"""
+    try:
+        client = get_docker_client()
+        bluemap_container_name = get_bluemap_container_name(server_container_name)
+        container = client.containers.get(bluemap_container_name)
+        if container.status != 'running':
+            container.start()
+        return True
+    except docker.errors.NotFound:
+        return False
+    except Exception as e:
+        print(f"Error starting BlueMap container {bluemap_container_name}: {e}")
+        return False
+
+
+def stop_bluemap_standalone(server_container_name):
+    """Stop the standalone BlueMap container for a server"""
+    try:
+        client = get_docker_client()
+        bluemap_container_name = get_bluemap_container_name(server_container_name)
+        container = client.containers.get(bluemap_container_name)
+        if container.status == 'running':
+            container.stop(timeout=10)
+        return True
+    except docker.errors.NotFound:
+        return True  # Already gone
+    except Exception as e:
+        print(f"Error stopping BlueMap container: {e}")
+        return False
+
+
+def delete_bluemap_standalone(server_container_name):
+    """Delete the standalone BlueMap container for a server"""
+    try:
+        client = get_docker_client()
+        bluemap_container_name = get_bluemap_container_name(server_container_name)
+        container = client.containers.get(bluemap_container_name)
+        if container.status == 'running':
+            container.stop(timeout=10)
+        container.remove()
+        return True
+    except docker.errors.NotFound:
+        return True  # Already gone
+    except Exception as e:
+        print(f"Error deleting BlueMap container: {e}")
+        return False
+
+
 def detect_server_type(data_path):
     """Detect Minecraft server type from files in the data directory."""
     # Check for JAR files that indicate server type
@@ -443,6 +685,7 @@ def create_mc_container(server_config):
     client = get_docker_client()
     container_name = server_config['container_name']
     internal_port = int(server_config['internal_port'])
+    server_type = server_config.get('type', 'VANILLA')
 
     # Host path for data (HOST_DATA_DIR must be absolute path on host)
     data_path = os.path.join(HOST_DATA_DIR, container_name)
@@ -450,12 +693,42 @@ def create_mc_container(server_config):
     # Environment variables for itzg/minecraft-server
     environment = {
         'EULA': 'TRUE',
-        'TYPE': server_config.get('type', 'VANILLA'),
+        'TYPE': server_type,
         'VERSION': server_config.get('version', 'LATEST'),
         'MEMORY': server_config.get('memory', '2G'),
         'ENABLE_QUERY': 'false',
         'ENABLE_RCON': 'false',
     }
+
+    # BlueMap support
+    bluemap_enabled = server_config.get('bluemap_enabled', False)
+
+    # Plugin mode for Paper/Spigot - BlueMap runs inside the MC server
+    if bluemap_enabled and server_type in BLUEMAP_PLUGIN_TYPES:
+        # Add BlueMap plugin URL to PLUGINS env var
+        existing_plugins = environment.get('PLUGINS', '')
+        if existing_plugins:
+            environment['PLUGINS'] = existing_plugins + '\n' + BLUEMAP_PLUGIN_URL
+        else:
+            environment['PLUGINS'] = BLUEMAP_PLUGIN_URL
+
+        # Pre-create BlueMap config with accept-download: true
+        # This avoids the manual acceptance step on first run
+        # Use MC_DATA_DIR (container path) not HOST_DATA_DIR (host path)
+        bluemap_config_dir = os.path.join(MC_DATA_DIR, container_name, 'plugins', 'BlueMap')
+        os.makedirs(bluemap_config_dir, exist_ok=True)
+        bluemap_core_conf = os.path.join(bluemap_config_dir, 'core.conf')
+        if not os.path.exists(bluemap_core_conf):
+            with open(bluemap_core_conf, 'w') as f:
+                f.write('# BlueMap Core Config - auto-generated\n')
+                f.write('accept-download: true\n')
+
+    # Standalone mode for Vanilla/Forge/Fabric - create separate BlueMap container
+    if bluemap_enabled and server_type in BLUEMAP_STANDALONE_TYPES:
+        try:
+            create_bluemap_standalone_container(server_config)
+        except Exception as e:
+            print(f"Warning: Failed to create BlueMap standalone container: {e}")
 
     # Merge custom env vars from config (set via edit page)
     custom_env = server_config.get('env', {})
@@ -472,12 +745,21 @@ def create_mc_container(server_config):
         print(f"Pulling itzg/minecraft-server:latest...")
         client.images.pull('itzg/minecraft-server', tag='latest')
 
+    # Port mappings - always expose Minecraft port
+    port_bindings = {'25565/tcp': ('127.0.0.1', internal_port)}
+
+    # Expose BlueMap web interface port if enabled (plugin mode only)
+    # Standalone mode uses a separate container with its own port binding
+    if bluemap_enabled and server_type in BLUEMAP_PLUGIN_TYPES and server_config.get('bluemap_port'):
+        bluemap_port = int(server_config['bluemap_port'])
+        port_bindings['8100/tcp'] = ('0.0.0.0', bluemap_port)
+
     # Create container
     container = client.containers.create(
         'itzg/minecraft-server:latest',
         name=container_name,
         environment=environment,
-        ports={'25565/tcp': ('127.0.0.1', internal_port)},
+        ports=port_bindings,
         volumes={
             data_path: {'bind': '/data', 'mode': 'rw'}
         },
@@ -492,6 +774,9 @@ def create_mc_container(server_config):
 
 def delete_mc_container(container_name):
     """Delete a Docker container (data dir preserved)"""
+    # Also delete any associated BlueMap standalone container
+    delete_bluemap_standalone(container_name)
+
     try:
         client = get_docker_client()
         container = client.containers.get(container_name)
@@ -765,6 +1050,8 @@ def dashboard():
             'memory': srv.get('memory', '2G'),
             'running': status == 'running',
             'status': status,
+            'bluemap_enabled': srv.get('bluemap_enabled', False),
+            'bluemap_port': srv.get('bluemap_port'),
         }
         servers.append(server_info)
 
@@ -784,6 +1071,7 @@ def create_server():
     server_type = request.form.get('type', 'VANILLA').upper()
     version = request.form.get('version', 'LATEST').strip()
     memory = request.form.get('memory', '2G').strip()
+    bluemap_enabled = request.form.get('bluemap_enabled') == '1'
 
     if not name:
         flash('Server name is required', 'error')
@@ -838,6 +1126,11 @@ def create_server():
         'version': version,
         'memory': memory,
     }
+
+    # BlueMap support (plugin for Paper/Spigot, standalone for Vanilla/Forge/Fabric)
+    if bluemap_enabled and server_type in BLUEMAP_SUPPORTED_TYPES:
+        server_config['bluemap_enabled'] = True
+        server_config['bluemap_port'] = get_next_bluemap_port(config)
 
     # Create server data directory (inside container mount)
     data_path = os.path.join(MC_DATA_DIR, container_name)
@@ -1041,6 +1334,9 @@ def start_server(port):
         if int(srv.get('external_port', 0)) == port:
             if start_mc_container(srv['container_name']):
                 flash(f'Started server "{srv["name"]}"', 'success')
+                # Start BlueMap standalone container if applicable
+                if srv.get('bluemap_enabled') and srv.get('type') in BLUEMAP_STANDALONE_TYPES:
+                    start_bluemap_standalone(srv['container_name'])
             else:
                 flash(f'Failed to start server "{srv["name"]}"', 'error')
             return redirect(url_for('dashboard'))
@@ -1058,6 +1354,8 @@ def stop_server(port):
         if int(srv.get('external_port', 0)) == port:
             if stop_mc_container(srv['container_name']):
                 flash(f'Stopped server "{srv["name"]}"', 'success')
+                # Note: BlueMap standalone keeps running so map remains viewable
+                # and can continue/complete rendering from existing world files
             else:
                 flash(f'Failed to stop server "{srv["name"]}"', 'error')
             return redirect(url_for('dashboard'))
@@ -1086,7 +1384,8 @@ def edit_server(port):
     return render_template('edit_server.html',
                          server=server_entry,
                          status=status,
-                         env_defaults=ENV_DEFAULTS)
+                         env_defaults=ENV_DEFAULTS,
+                         bluemap_supported_types=BLUEMAP_SUPPORTED_TYPES)
 
 
 @app.route('/servers/<int:port>/edit', methods=['POST'])
@@ -1154,13 +1453,35 @@ def update_server(port):
     if server_entry.get('type') != 'PAPER':
         new_env.pop('SPIGET_RESOURCES', None)
 
+    # BlueMap toggle (plugin for Paper/Spigot, standalone for Vanilla/Forge/Fabric)
+    bluemap_enabled = request.form.get('bluemap_enabled') == 'on'
+    old_bluemap = server_entry.get('bluemap_enabled', False)
+    bluemap_changed = False
+    server_type = server_entry.get('type')
+
+    if server_type in BLUEMAP_SUPPORTED_TYPES:
+        if bluemap_enabled and not old_bluemap:
+            # Enabling BlueMap - allocate a port
+            server_entry['bluemap_enabled'] = True
+            server_entry['bluemap_port'] = get_next_bluemap_port(config)
+            bluemap_changed = True
+        elif not bluemap_enabled and old_bluemap:
+            # Disabling BlueMap
+            server_entry['bluemap_enabled'] = False
+            # Keep the port in case they re-enable
+            bluemap_changed = True
+            # Clean up standalone BlueMap container if applicable
+            if server_type in BLUEMAP_STANDALONE_TYPES:
+                delete_bluemap_standalone(server_entry['container_name'])
+
     # Determine what changed
     old_env = server_entry.get('env', {})
     name_changed = new_name != server_entry.get('name', '')
     needs_recreation = (
         new_version != server_entry.get('version', 'LATEST') or
         new_memory != server_entry.get('memory', '2G') or
-        new_env != old_env
+        new_env != old_env or
+        bluemap_changed
     )
 
     # Update config entry

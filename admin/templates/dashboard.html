@@ -53,6 +53,11 @@
                     {% if server.type in ('PAPER', 'SPIGOT', 'FABRIC', 'FORGE') %}
                     <a href="{{ url_for('server_mods', port=server.external_port) }}" class="btn btn-secondary btn-sm">{{ 'Plugins' if server.type in ('PAPER', 'SPIGOT') else 'Mods' }}</a>
                     {% endif %}
+                    {% if server.get('bluemap_enabled') and server.get('bluemap_port') %}
+                    {# Plugin mode (Paper/Spigot) requires server running; Standalone mode runs independently #}
+                    {% set is_plugin_mode = server.type in ('PAPER', 'SPIGOT') %}
+                    <a href="http://{{ request.host.split(':')[0] }}:{{ server.bluemap_port }}" target="_blank" class="btn btn-secondary btn-sm action-map" data-bluemap-mode="{{ 'plugin' if is_plugin_mode else 'standalone' }}" {% if is_plugin_mode and not server.running %}style="opacity: 0.5; pointer-events: none;"{% endif %}>Map</a>
+                    {% endif %}
                 </td>
             </tr>
             <tr class="detail-row" data-detail-port="{{ server.external_port }}" style="display: none;">
@@ -130,6 +135,12 @@
                 <option value="6G">6G</option>
                 <option value="8G">8G</option>
             </select>
+        </div>
+        <div class="form-group bluemap-option" id="bluemap-option" style="display: none;">
+            <div class="checkbox-group">
+                <input type="checkbox" id="bluemap_enabled" name="bluemap_enabled" value="1">
+                <label for="bluemap_enabled" style="margin: 0;">Enable BlueMap (3D web map)</label>
+            </div>
         </div>
         <button type="submit" class="btn btn-primary">Create Server</button>
     </form>
@@ -309,6 +320,15 @@ function toggleImportType() {
                         consoleBtn.style.pointerEvents = server.running ? '' : 'none';
                     }
 
+                    // Update map button (only disable for plugin mode when server stopped)
+                    const mapBtn = row.querySelector('.action-map');
+                    if (mapBtn) {
+                        const isPluginMode = mapBtn.dataset.bluemapMode === 'plugin';
+                        const shouldDisable = isPluginMode && !server.running;
+                        mapBtn.style.opacity = shouldDisable ? '0.5' : '';
+                        mapBtn.style.pointerEvents = shouldDisable ? 'none' : '';
+                    }
+
                     // Update detail row
                     const detail = document.querySelector(`tr[data-detail-port="${server.external_port}"]`);
                     if (detail) {
@@ -383,6 +403,30 @@ function toggleImportType() {
         typeSelect.addEventListener('change', function() {
             loadVersions(this.value, 'LATEST');
         });
+    }
+
+    // BlueMap option visibility (all server types supported)
+    const bluemapOption = document.getElementById('bluemap-option');
+    const bluemapSupportedTypes = ['PAPER', 'SPIGOT', 'VANILLA', 'FORGE', 'FABRIC'];
+
+    function updateBluemapVisibility() {
+        if (typeSelect && bluemapOption) {
+            const supported = bluemapSupportedTypes.includes(typeSelect.value);
+            bluemapOption.style.display = supported ? '' : 'none';
+            // Update label to show mode
+            const label = bluemapOption.querySelector('label');
+            if (label) {
+                const isPlugin = ['PAPER', 'SPIGOT'].includes(typeSelect.value);
+                label.textContent = isPlugin
+                    ? 'Enable BlueMap (3D web map - plugin)'
+                    : 'Enable BlueMap (3D web map - standalone)';
+            }
+        }
+    }
+
+    if (typeSelect) {
+        updateBluemapVisibility();
+        typeSelect.addEventListener('change', updateBluemapVisibility);
     }
 </script>
 {% endblock %}
