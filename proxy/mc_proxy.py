@@ -715,6 +715,16 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
             pass
         return
 
+    # Reject empty player names (common from scanners/bots)
+    if not player_name or not player_name.strip():
+        print(f"[Port {port}] Rejected login with empty player name (likely scanner)")
+        try:
+            client.sendall(build_disconnect_packet("Invalid username"))
+            client.close()
+        except:
+            pass
+        return
+
     # Check if player is unauthorized (notify only, server enforces)
     if player_name:
         container_name = server_info.get('container_name', '')
