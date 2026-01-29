@@ -196,7 +196,7 @@
         </p>
     </div>
 
-    <!-- BlueMap (Paper/Spigot only) -->
+    <!-- BlueMap -->
     {% if server.type in bluemap_supported_types %}
     <div class="card">
         <h2>BlueMap</h2>
@@ -207,6 +207,11 @@
         </div>
         <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
             3D interactive web map of your Minecraft world.
+            {% if server.type in ('PAPER', 'SPIGOT') %}
+            Runs as a plugin inside the server.
+            {% else %}
+            Runs as a standalone container (reads world files externally).
+            {% endif %}
             {% if server.get('bluemap_port') %}
             Web interface on port {{ server.bluemap_port }}.
             {% endif %}
