@@ -21,6 +21,7 @@ from notifications import NotificationManager
 # Configuration
 CONFIG_PATH = '/app/config/config.json'
 PROXY_STATE_PATH = '/app/config/proxy_state.json'
+MANUAL_START_PATH = '/app/config/manual_start.json'
 LOGS_DIR = '/app/logs'
 MC_DATA_DIR = '/mc_data'
 
@@ -114,6 +115,32 @@ def load_config() -> dict:
     except Exception as e:
         print(f"Error loading config: {e}")
         return {}
+
+
+def is_manual_start(port: int) -> bool:
+    """Check if a server was started manually (won't auto-shutdown)."""
+    try:
+        with open(MANUAL_START_PATH, 'r') as f:
+            flags = json.load(f)
+            return flags.get(str(port), False)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+
+def clear_manual_start_flag(port: int):
+    """Clear the manual start flag for a port (called when server stops)."""
+    try:
+        with open(MANUAL_START_PATH, 'r') as f:
+            flags = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    if str(port) in flags:
+        del flags[str(port)]
+        try:
+            with open(MANUAL_START_PATH, 'w') as f:
+                json.dump(flags, f)
+        except Exception as e:
+            print(f"Error clearing manual start flag: {e}")
 
 
 def write_proxy_state():
@@ -501,7 +528,10 @@ def decrement_connections(port: int, config: dict, docker_mgr: DockerManager, pl
         count = server_connections[port]
         print(f"[Port {port}] Connections: {count} (player left: {player_name})")
 
-        if count == 0 and config.get('auto_shutdown', True):
+        # Check if server was started manually (won't auto-shutdown)
+        if is_manual_start(port):
+            print(f"[Port {port}] Manual start - skipping auto-shutdown")
+        elif count == 0 and config.get('auto_shutdown', True):
             timeout_minutes = config.get('timeout', 5)
             print(f"[Port {port}] Scheduling shutdown in {timeout_minutes} minutes")
 
@@ -518,6 +548,7 @@ def decrement_connections(port: int, config: dict, docker_mgr: DockerManager, pl
                 if should_stop:
                     write_proxy_state()
                     docker_mgr.stop_server(port)
+                    clear_manual_start_flag(port)  # Clear flag on stop
                     usage_logger.log_server_stop(port, 'idle_timeout', name)
                     if notification_manager:
                         notification_manager.notify('server_stop', name=name, reason='idle timeout')

@@ -41,6 +41,7 @@ LOGIN_LOCKOUT_SECONDS = 300  # 5 minutes
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'changeme')
 CONFIG_PATH = '/config/config.json'
+MANUAL_START_PATH = '/config/manual_start.json'
 LOGS_DIR = '/app/logs'
 PROXY_CONTAINER_NAME = 'mc_proxy'
 HOST_DATA_DIR = os.getenv('HOST_DATA_DIR', '/home/sanford/minecraftserver/mc_data')
@@ -149,6 +150,29 @@ def save_config(config):
     except Exception as e:
         print(f"Error saving config: {e}")
         raise
+
+
+def load_manual_start_flags():
+    """Load manual start flags from file."""
+    try:
+        with open(MANUAL_START_PATH, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def set_manual_start_flag(port, value):
+    """Set or clear the manual start flag for a port."""
+    flags = load_manual_start_flags()
+    if value:
+        flags[str(port)] = True
+    else:
+        flags.pop(str(port), None)
+    try:
+        with open(MANUAL_START_PATH, 'w') as f:
+            json.dump(flags, f)
+    except Exception as e:
+        print(f"Error saving manual start flags: {e}")
 
 
 def restart_proxy():
@@ -1381,6 +1405,8 @@ def start_server(port):
         if int(srv.get('external_port', 0)) == port:
             if start_mc_container(srv['container_name']):
                 flash(f'Started server "{srv["name"]}"', 'success')
+                # Mark as manual start - server won't auto-shutdown
+                set_manual_start_flag(port, True)
                 # Start BlueMap standalone container if applicable
                 if srv.get('bluemap_enabled') and srv.get('type') in BLUEMAP_STANDALONE_TYPES:
                     start_bluemap_standalone(srv['container_name'])
@@ -1401,6 +1427,8 @@ def stop_server(port):
         if int(srv.get('external_port', 0)) == port:
             if stop_mc_container(srv['container_name']):
                 flash(f'Stopped server "{srv["name"]}"', 'success')
+                # Clear manual start flag
+                set_manual_start_flag(port, False)
                 # Note: BlueMap standalone keeps running so map remains viewable
                 # and can continue/complete rendering from existing world files
             else:
@@ -1637,6 +1665,9 @@ def api_status():
     except (FileNotFoundError, json.JSONDecodeError):
         pass
 
+    # Read manual start flags
+    manual_start_flags = load_manual_start_flags()
+
     client = get_docker_client()
 
     servers = []
@@ -1663,6 +1694,7 @@ def api_status():
             'status': status,
             'players': ps.get('players', 0),
             'shutdown_seconds': ps.get('shutdown_seconds'),
+            'manual_start': manual_start_flags.get(port_str, False),
             'started_at': started_at,
             'motd': env.get('MOTD', 'A Minecraft Server'),
             'mode': env.get('MODE', 'survival'),
