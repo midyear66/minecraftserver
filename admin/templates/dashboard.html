@@ -24,7 +24,7 @@
         <tbody>
             {% for server in servers %}
             <tr data-port="{{ server.external_port }}">
-                <td class="server-name" style="cursor: pointer;">{{ server.name }}</td>
+                <td class="server-name" style="cursor: pointer;"><span class="expand-chevron">›</span> {{ server.name }}</td>
                 <td>{{ server.external_port }}</td>
                 <td>{{ server.type }}</td>
                 <td>{{ server.version }}</td>
@@ -227,6 +227,16 @@ function toggleImportType() {
         color: #e94560;
     }
 
+    .expand-chevron {
+        display: inline-block;
+        transition: transform 0.2s ease;
+        font-weight: bold;
+    }
+
+    .expand-chevron.expanded {
+        transform: rotate(90deg);
+    }
+
     .detail-row td {
         padding-top: 0;
         border-top: none;
@@ -366,8 +376,13 @@ function toggleImportType() {
         el.addEventListener('click', function() {
             const port = this.closest('tr').dataset.port;
             const detailRow = document.querySelector('tr[data-detail-port="' + port + '"]');
+            const chevron = this.querySelector('.expand-chevron');
             if (detailRow) {
-                detailRow.style.display = detailRow.style.display === 'none' ? '' : 'none';
+                const isHidden = detailRow.style.display === 'none';
+                detailRow.style.display = isHidden ? '' : 'none';
+                if (chevron) {
+                    chevron.classList.toggle('expanded', isHidden);
+                }
             }
         });
     });
