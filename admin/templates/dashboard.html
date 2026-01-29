@@ -340,10 +340,18 @@ function toggleImportType() {
                             server.running ? server.players + ' / ' + server.max_players : '-';
                         detail.querySelector('.uptime').textContent =
                             server.running ? formatUptime(server.started_at) : '-';
-                        detail.querySelector('.shutdown-timer').textContent =
-                            (server.shutdown_seconds !== null && server.shutdown_seconds !== undefined && server.running)
-                                ? formatShutdown(server.shutdown_seconds)
-                                : (server.running ? 'Players connected' : '-');
+                        // Determine auto-shutdown status
+                        let shutdownText = '-';
+                        if (server.running) {
+                            if (server.manual_start) {
+                                shutdownText = 'Disabled (manual)';
+                            } else if (server.shutdown_seconds !== null && server.shutdown_seconds !== undefined) {
+                                shutdownText = formatShutdown(server.shutdown_seconds);
+                            } else {
+                                shutdownText = 'Players connected';
+                            }
+                        }
+                        detail.querySelector('.shutdown-timer').textContent = shutdownText;
                         detail.querySelector('.motd').textContent = server.motd || '-';
                         detail.querySelector('.mode').textContent = capitalize(server.mode);
                         detail.querySelector('.difficulty').textContent = capitalize(server.difficulty);
