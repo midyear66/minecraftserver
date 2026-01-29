@@ -205,6 +205,11 @@
                    {% if server.get('bluemap_enabled', False) %}checked{% endif %}>
             <label for="bluemap_enabled" style="margin: 0;">Enable BlueMap</label>
         </div>
+        <div class="checkbox-group" style="margin-top: 0.5rem;">
+            <input type="checkbox" id="bluemap_caves" name="bluemap_caves"
+                   {% if server.get('bluemap_caves', False) %}checked{% endif %}>
+            <label for="bluemap_caves" style="margin: 0;">Show Caves</label>
+        </div>
         <p style="color: #888; font-size: 0.85rem; margin-top: 0.5rem;">
             3D interactive web map of your Minecraft world.
             {% if server.type in ('PAPER', 'SPIGOT') %}
@@ -215,6 +220,7 @@
             {% if server.get('bluemap_port') %}
             Web interface on port {{ server.bluemap_port }}.
             {% endif %}
+            <br>Enabling caves increases render time and storage usage.
         </p>
     </div>
     {% endif %}
