@@ -231,10 +231,11 @@ def get_bluemap_container_name(server_container_name):
     return f"{server_container_name}_bluemap"
 
 
-def create_bluemap_standalone_config(server_config):
+def create_bluemap_standalone_config(server_config, force_update_maps=False):
     """Create configuration files for standalone BlueMap container"""
     container_name = server_config['container_name']
     server_name = server_config.get('name', container_name)
+    show_caves = server_config.get('bluemap_caves', False)
 
     # Config directory inside admin container's view
     config_base = os.path.join(MC_DATA_DIR, container_name, 'bluemap-standalone')
@@ -279,9 +280,12 @@ def create_bluemap_standalone_config(server_config):
             f.write('compression: gzip\n')
 
     # Create map configs for standard dimensions
+    # Caves setting: -64 shows all caves, 55 hides most caves
+    cave_y_level = '-64' if show_caves else '55'
+
     # Overworld
     overworld_conf = os.path.join(config_base, 'maps', 'overworld.conf')
-    if not os.path.exists(overworld_conf):
+    if not os.path.exists(overworld_conf) or force_update_maps:
         with open(overworld_conf, 'w') as f:
             f.write(f'# {server_name} Overworld\n')
             f.write('world: "world/world"\n')
@@ -290,7 +294,7 @@ def create_bluemap_standalone_config(server_config):
             f.write('sorting: 0\n')
             f.write('sky-color: "#7dabff"\n')
             f.write('void-color: "#000000"\n')
-            f.write('remove-caves-below-y: 55\n')
+            f.write(f'remove-caves-below-y: {cave_y_level}\n')
             f.write('enable-perspective-view: true\n')
             f.write('enable-flat-view: true\n')
             f.write('enable-free-flight-view: true\n')
@@ -299,7 +303,7 @@ def create_bluemap_standalone_config(server_config):
 
     # Nether
     nether_conf = os.path.join(config_base, 'maps', 'nether.conf')
-    if not os.path.exists(nether_conf):
+    if not os.path.exists(nether_conf) or force_update_maps:
         with open(nether_conf, 'w') as f:
             f.write(f'# {server_name} Nether\n')
             f.write('world: "world/world"\n')
@@ -318,7 +322,7 @@ def create_bluemap_standalone_config(server_config):
 
     # End
     end_conf = os.path.join(config_base, 'maps', 'end.conf')
-    if not os.path.exists(end_conf):
+    if not os.path.exists(end_conf) or force_update_maps:
         with open(end_conf, 'w') as f:
             f.write(f'# {server_name} End\n')
             f.write('world: "world/world"\n')
@@ -336,6 +340,32 @@ def create_bluemap_standalone_config(server_config):
             f.write('storage: "file"\n')
 
     return config_base
+
+
+def update_bluemap_caves_setting(server_config):
+    """Update BlueMap caves setting for standalone container and trigger re-render"""
+    container_name = server_config['container_name']
+    bluemap_container_name = get_bluemap_container_name(container_name)
+
+    # Update config files with new caves setting
+    create_bluemap_standalone_config(server_config, force_update_maps=True)
+
+    # Purge overworld map data to force re-render with new settings
+    try:
+        client = get_docker_client()
+        container = client.containers.get(bluemap_container_name)
+
+        # Remove overworld map data inside the container
+        container.exec_run('rm -rf /app/web/maps/overworld')
+
+        # Restart to apply changes
+        container.restart(timeout=10)
+        return True
+    except docker.errors.NotFound:
+        return False
+    except Exception as e:
+        print(f"Error updating BlueMap caves setting: {e}")
+        return False
 
 
 def create_bluemap_standalone_container(server_config):
@@ -723,6 +753,21 @@ def create_mc_container(server_config):
                 f.write('# BlueMap Core Config - auto-generated\n')
                 f.write('accept-download: true\n')
 
+        # Pre-create map config with caves setting
+        show_caves = server_config.get('bluemap_caves', False)
+        cave_y_level = '-64' if show_caves else '55'
+        bluemap_maps_dir = os.path.join(bluemap_config_dir, 'maps')
+        os.makedirs(bluemap_maps_dir, exist_ok=True)
+        overworld_conf = os.path.join(bluemap_maps_dir, 'overworld.conf')
+        if not os.path.exists(overworld_conf):
+            server_name = server_config.get('name', container_name)
+            with open(overworld_conf, 'w') as f:
+                f.write(f'# {server_name} Overworld - auto-generated\n')
+                f.write('world: "world"\n')
+                f.write('dimension: "minecraft:overworld"\n')
+                f.write(f'name: "{server_name}"\n')
+                f.write(f'remove-caves-below-y: {cave_y_level}\n')
+
     # Standalone mode for Vanilla/Forge/Fabric - create separate BlueMap container
     if bluemap_enabled and server_type in BLUEMAP_STANDALONE_TYPES:
         try:
@@ -1072,6 +1117,7 @@ def create_server():
     version = request.form.get('version', 'LATEST').strip()
     memory = request.form.get('memory', '2G').strip()
     bluemap_enabled = request.form.get('bluemap_enabled') == '1'
+    bluemap_caves = request.form.get('bluemap_caves') == '1'
 
     if not name:
         flash('Server name is required', 'error')
@@ -1131,6 +1177,7 @@ def create_server():
     if bluemap_enabled and server_type in BLUEMAP_SUPPORTED_TYPES:
         server_config['bluemap_enabled'] = True
         server_config['bluemap_port'] = get_next_bluemap_port(config)
+        server_config['bluemap_caves'] = bluemap_caves
 
     # Create server data directory (inside container mount)
     data_path = os.path.join(MC_DATA_DIR, container_name)
@@ -1455,8 +1502,11 @@ def update_server(port):
 
     # BlueMap toggle (plugin for Paper/Spigot, standalone for Vanilla/Forge/Fabric)
     bluemap_enabled = request.form.get('bluemap_enabled') == 'on'
+    bluemap_caves = request.form.get('bluemap_caves') == 'on'
     old_bluemap = server_entry.get('bluemap_enabled', False)
+    old_caves = server_entry.get('bluemap_caves', False)
     bluemap_changed = False
+    caves_changed = False
     server_type = server_entry.get('type')
 
     if server_type in BLUEMAP_SUPPORTED_TYPES:
@@ -1464,6 +1514,7 @@ def update_server(port):
             # Enabling BlueMap - allocate a port
             server_entry['bluemap_enabled'] = True
             server_entry['bluemap_port'] = get_next_bluemap_port(config)
+            server_entry['bluemap_caves'] = bluemap_caves
             bluemap_changed = True
         elif not bluemap_enabled and old_bluemap:
             # Disabling BlueMap
@@ -1473,6 +1524,11 @@ def update_server(port):
             # Clean up standalone BlueMap container if applicable
             if server_type in BLUEMAP_STANDALONE_TYPES:
                 delete_bluemap_standalone(server_entry['container_name'])
+        elif bluemap_enabled:
+            # BlueMap already enabled - check if caves setting changed
+            if bluemap_caves != old_caves:
+                server_entry['bluemap_caves'] = bluemap_caves
+                caves_changed = True
 
     # Determine what changed
     old_env = server_entry.get('env', {})
@@ -1496,6 +1552,18 @@ def update_server(port):
     config['servers'][server_idx] = server_entry
     save_config(config)
 
+    # Handle BlueMap caves setting change (doesn't require MC container recreation)
+    if caves_changed and not bluemap_changed:
+        if server_type in BLUEMAP_STANDALONE_TYPES:
+            if update_bluemap_caves_setting(server_entry):
+                flash(f'Updated caves setting for "{new_name}". Map will re-render.', 'success')
+            else:
+                flash(f'Updated config but failed to update BlueMap caves setting.', 'warning')
+        elif server_type in BLUEMAP_PLUGIN_TYPES:
+            # For plugin mode, need to update the plugin config
+            # This requires the MC container to be recreated
+            needs_recreation = True
+
     # Recreate container if needed
     if needs_recreation:
         success, was_running = recreate_mc_container(server_entry)
@@ -1506,6 +1574,8 @@ def update_server(port):
             flash(msg, 'success')
         else:
             flash(f'Updated config for "{new_name}" but failed to recreate container.', 'error')
+    elif caves_changed:
+        pass  # Already handled above
     elif name_changed:
         flash(f'Updated server name to "{new_name}".', 'success')
     else:
