@@ -16,6 +16,7 @@ A Docker-based platform for managing multiple Minecraft servers with a protocol-
 - **Backup Management** -- Create, schedule, and restore server backups through the admin panel.
 - **Cross-Platform** -- Works on Linux, macOS (Docker Desktop), and Windows (WSL/Git Bash) with automatic platform detection and networking configuration.
 - **Crafty Controller Migration** -- Import existing servers from Crafty Controller using the included migration script.
+- **BlueMap Integration** -- 3D interactive web maps of your Minecraft worlds. Runs as a plugin for Paper/Spigot or as a standalone container for Vanilla/Forge/Fabric servers.
 
 ## Architecture
 
@@ -142,6 +143,37 @@ The import process:
 4. Creates and optionally starts the Docker container
 
 Access the Import Server form from the dashboard, below Create Server.
+
+## BlueMap Integration
+
+BlueMap provides a 3D interactive web map of your Minecraft world, accessible via browser.
+
+### Supported Server Types
+
+| Server Type | BlueMap Mode | Description |
+|-------------|--------------|-------------|
+| Paper, Spigot | Plugin | Runs inside the Minecraft server. Map only accessible when server is running. |
+| Vanilla, Forge, Fabric | Standalone | Runs in a separate Docker container. Map remains accessible even when server is stopped. |
+
+### Enabling BlueMap
+
+- **New servers:** Check "Enable BlueMap" when creating the server.
+- **Existing servers:** Enable via the Edit Server page.
+
+BlueMap auto-allocates a web interface port starting from 8100. Access the map from the "Map" button on the dashboard.
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| **Enable BlueMap** | Activates the 3D web map for this server. |
+| **Show Caves** | Renders underground caves in the map. Increases render time and storage usage. |
+
+### Notes
+
+- Configuration files are auto-generated with `accept-download: true` to skip the manual acceptance step.
+- Standalone mode reads world files externally, so the map can continue rendering and remain viewable while the Minecraft server is stopped.
+- Changing the caves setting triggers a map re-render for the affected dimensions.
 
 ## Migration from Crafty Controller
 
