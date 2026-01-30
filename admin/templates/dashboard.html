@@ -50,13 +50,13 @@
                     <form method="POST" action="{{ url_for('remove_server', port=server.external_port) }}" class="inline-form" onsubmit="return confirm('Remove server &quot;{{ server.name }}&quot;? Container will be deleted but data is preserved.')">
                         <button type="submit" class="btn btn-secondary btn-sm">Remove</button>
                     </form>
-                    {% if server.type in ('PAPER', 'SPIGOT', 'FABRIC', 'FORGE') %}
-                    <a href="{{ url_for('server_mods', port=server.external_port) }}" class="btn btn-secondary btn-sm">{{ 'Plugins' if server.type in ('PAPER', 'SPIGOT') else 'Mods' }}</a>
-                    {% endif %}
                     {% if server.get('bluemap_enabled') and server.get('bluemap_port') %}
                     {# Plugin mode (Paper/Spigot) requires server running; Standalone mode runs independently #}
                     {% set is_plugin_mode = server.type in ('PAPER', 'SPIGOT') %}
                     <a href="http://{{ request.host.split(':')[0] }}:{{ server.bluemap_port }}" target="_blank" class="btn btn-secondary btn-sm action-map" data-bluemap-mode="{{ 'plugin' if is_plugin_mode else 'standalone' }}" {% if is_plugin_mode and not server.running %}style="opacity: 0.5; pointer-events: none;"{% endif %}>Map</a>
+                    {% endif %}
+                    {% if server.type in ('PAPER', 'SPIGOT', 'FABRIC', 'FORGE') %}
+                    <a href="{{ url_for('server_mods', port=server.external_port) }}" class="btn btn-secondary btn-sm">{{ 'Plugins' if server.type in ('PAPER', 'SPIGOT') else 'Mods' }}</a>
                     {% endif %}
                 </td>
             </tr>
