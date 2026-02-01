@@ -71,6 +71,10 @@ def _make_exclude_filter(base_path):
         if top_level in EXCLUDE_DIRS:
             return None
 
+        # Exclude bluemap-* directories (bluemap-data, bluemap-web, etc.)
+        if top_level.startswith('bluemap-'):
+            return None
+
         # Exclude jar files at top level only
         if len(parts) == 2 and top_level.endswith('.jar'):
             return None
