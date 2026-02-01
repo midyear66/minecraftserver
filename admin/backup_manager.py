@@ -16,7 +16,7 @@ def _is_safe_path(basedir, path):
     return abs_path.startswith(abs_basedir + os.sep) or abs_path == abs_basedir
 
 # Directories/files to exclude from backups (large, regenerated on start)
-EXCLUDE_DIRS = {'libraries', 'versions', '.cache', 'logs', 'cache'}
+EXCLUDE_DIRS = {'libraries', 'versions', '.cache', 'logs', 'cache', 'bluemap'}
 
 # Thread-safe state
 _backup_in_progress = {}
