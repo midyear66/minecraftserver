@@ -254,6 +254,165 @@
                 min-width: 100%;
             }
         }
+
+        /* Update notification bell */
+        .update-bell-container {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            margin-right: 0.5rem;
+        }
+
+        .update-bell {
+            background: none;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            padding: 0.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+            position: relative;
+        }
+
+        .update-bell:hover {
+            color: #eee;
+        }
+
+        .update-bell.has-updates {
+            color: #e94560;
+        }
+
+        .update-badge {
+            position: absolute;
+            top: -4px;
+            right: -6px;
+            background: #e94560;
+            color: white;
+            font-size: 0.65rem;
+            font-weight: bold;
+            min-width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 4px;
+        }
+
+        .update-popup {
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            min-width: 280px;
+            max-width: 350px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+        }
+
+        .update-popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #0f3460;
+            font-weight: bold;
+            color: #eee;
+        }
+
+        .update-clear-btn {
+            background: none;
+            border: 1px solid #0f3460;
+            color: #aaa;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .update-clear-btn:hover {
+            background: #0f3460;
+            color: #eee;
+        }
+
+        .update-popup-content {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .update-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #0f3460;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: inherit;
+        }
+
+        .update-item:last-child {
+            border-bottom: none;
+        }
+
+        .update-item:hover {
+            background: rgba(15, 52, 96, 0.5);
+        }
+
+        .update-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .update-item-name {
+            color: #eee;
+            font-weight: 500;
+        }
+
+        .update-item-type {
+            color: #888;
+            font-size: 0.75rem;
+        }
+
+        .update-item-versions {
+            text-align: right;
+            font-size: 0.85rem;
+        }
+
+        .update-item-current {
+            color: #aaa;
+        }
+
+        .update-item-arrow {
+            color: #e94560;
+            margin: 0 0.25rem;
+        }
+
+        .update-item-latest {
+            color: #28a745;
+            font-weight: 500;
+        }
+
+        .update-popup-empty {
+            padding: 1.5rem 1rem;
+            text-align: center;
+            color: #888;
+        }
+
+        @media (max-width: 600px) {
+            .update-popup {
+                position: fixed;
+                top: 60px;
+                left: 1rem;
+                right: 1rem;
+                min-width: auto;
+                max-width: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -261,6 +420,23 @@
     <nav>
         <span class="brand">MC Server Manager</span>
         <div class="links">
+            <!-- Update notification bell -->
+            <div class="update-bell-container">
+                <button class="update-bell" id="update-bell" title="Version Updates">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                    <span class="update-badge" id="update-badge" style="display: none;">0</span>
+                </button>
+                <div class="update-popup" id="update-popup" style="display: none;">
+                    <div class="update-popup-header">
+                        <span>Version Updates</span>
+                        <button class="update-clear-btn" id="update-clear-btn" title="Dismiss all">Clear</button>
+                    </div>
+                    <div class="update-popup-content" id="update-popup-content"></div>
+                </div>
+            </div>
             <a href="{{ url_for('dashboard') }}">Dashboard</a>
             <a href="{{ url_for('logs') }}">Logs</a>
             <a href="{{ url_for('tasks') }}">Tasks</a>
@@ -297,6 +473,140 @@
             input.value = csrfToken;
             form.appendChild(input);
         });
+    })();
+    </script>
+
+    <script>
+    // Update notification bell functionality
+    (function() {
+        var bell = document.getElementById('update-bell');
+        if (!bell) return;
+
+        var badge = document.getElementById('update-badge');
+        var popup = document.getElementById('update-popup');
+        var content = document.getElementById('update-popup-content');
+        var clearBtn = document.getElementById('update-clear-btn');
+
+        var STORAGE_KEY = 'mc_dismissed_updates';
+        var CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+        var currentUpdates = [];
+
+        function getDismissed() {
+            try {
+                var data = localStorage.getItem(STORAGE_KEY);
+                if (!data) return {};
+                var parsed = JSON.parse(data);
+                var now = Date.now();
+                var cleaned = {};
+                for (var key in parsed) {
+                    if (now - parsed[key].timestamp < 24 * 60 * 60 * 1000) {
+                        cleaned[key] = parsed[key];
+                    }
+                }
+                return cleaned;
+            } catch (e) {
+                return {};
+            }
+        }
+
+        function setDismissed(dismissed) {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(dismissed));
+            } catch (e) {
+                console.error('Failed to save dismissed updates:', e);
+            }
+        }
+
+        function updateKey(update) {
+            return update.port + ':' + update.current_version + ':' + update.latest_version;
+        }
+
+        function filterDismissed(updates) {
+            var dismissed = getDismissed();
+            return updates.filter(function(u) {
+                return !dismissed[updateKey(u)];
+            });
+        }
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function renderPopup(updates) {
+            if (updates.length === 0) {
+                content.innerHTML = '<div class="update-popup-empty">No updates available</div>';
+                return;
+            }
+
+            content.innerHTML = updates.map(function(u) {
+                return '<a href="/servers/' + u.port + '/edit" class="update-item" style="text-decoration: none;">' +
+                    '<div class="update-item-info">' +
+                        '<span class="update-item-name">' + escapeHtml(u.name) + '</span>' +
+                        '<span class="update-item-type">' + u.type + '</span>' +
+                    '</div>' +
+                    '<div class="update-item-versions">' +
+                        '<span class="update-item-current">' + escapeHtml(u.current_version) + '</span>' +
+                        '<span class="update-item-arrow">&rarr;</span>' +
+                        '<span class="update-item-latest">' + escapeHtml(u.latest_version) + '</span>' +
+                    '</div>' +
+                '</a>';
+            }).join('');
+        }
+
+        function updateBadge(count) {
+            if (count > 0) {
+                badge.textContent = count > 9 ? '9+' : count;
+                badge.style.display = 'flex';
+                bell.classList.add('has-updates');
+            } else {
+                badge.style.display = 'none';
+                bell.classList.remove('has-updates');
+            }
+        }
+
+        function checkForUpdates() {
+            fetch('/api/version-updates')
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    currentUpdates = filterDismissed(data.updates || []);
+                    updateBadge(currentUpdates.length);
+                    renderPopup(currentUpdates);
+                })
+                .catch(function(err) {
+                    console.error('Failed to check for updates:', err);
+                });
+        }
+
+        bell.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var isVisible = popup.style.display === 'block';
+            popup.style.display = isVisible ? 'none' : 'block';
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!popup.contains(e.target) && e.target !== bell) {
+                popup.style.display = 'none';
+            }
+        });
+
+        clearBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var dismissed = getDismissed();
+            var now = Date.now();
+            currentUpdates.forEach(function(u) {
+                dismissed[updateKey(u)] = { timestamp: now };
+            });
+            setDismissed(dismissed);
+            currentUpdates = [];
+            updateBadge(0);
+            renderPopup([]);
+        });
+
+        checkForUpdates();
+        setInterval(checkForUpdates, CHECK_INTERVAL);
     })();
     </script>
 </body>

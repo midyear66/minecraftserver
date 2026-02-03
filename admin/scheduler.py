@@ -192,7 +192,11 @@ def _run_version_check(task, server, config):
 
     # auto_update
     container_name = server['container_name']
-    was_running = _get_container_status(container_name) == 'running'
+    is_running = _get_container_status(container_name) == 'running'
+
+    # Only update when server is stopped to avoid interrupting players
+    if is_running:
+        return f"Update available: {current_version} -> {latest_version} (waiting for server to stop)"
 
     # Update version in config
     with _config_lock:
@@ -210,13 +214,6 @@ def _run_version_check(task, server, config):
         return f"Error: failed to recreate container for update to {latest_version}"
 
     result = f"Updated: {current_version} -> {latest_version}"
-
-    auto_restart = task.get('config', {}).get('auto_restart', True)
-    if was_running and auto_restart:
-        _start_mc_container(container_name)
-        result += " (restarted)"
-    elif was_running:
-        result += " (was running, now stopped)"
 
     _send_notification(
         config,

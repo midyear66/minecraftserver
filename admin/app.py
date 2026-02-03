@@ -1718,6 +1718,38 @@ def api_versions(server_type):
     return jsonify({'versions': ['LATEST'] + versions})
 
 
+@app.route('/api/version-updates')
+@login_required
+def api_version_updates():
+    """API endpoint returning servers with available version updates."""
+    config = load_config()
+    updates = []
+
+    for server in config.get('servers', []):
+        current_version = server.get('version', 'LATEST')
+        server_type = server.get('type', 'VANILLA')
+
+        # Skip servers set to LATEST - they always get newest
+        if current_version.upper() == 'LATEST':
+            continue
+
+        versions = get_versions_for_type(server_type)
+        if not versions:
+            continue
+
+        latest_version = versions[0]
+        if latest_version != current_version:
+            updates.append({
+                'name': server.get('name', 'Unknown'),
+                'port': server.get('external_port'),
+                'type': server_type,
+                'current_version': current_version,
+                'latest_version': latest_version,
+            })
+
+    return jsonify({'updates': updates})
+
+
 @app.route('/servers/<int:port>/console')
 @login_required
 def console(port):
