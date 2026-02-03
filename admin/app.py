@@ -442,7 +442,7 @@ def create_bluemap_standalone_container(server_config):
             'managed_by': 'mc_manager',
             'bluemap_for': server_container_name,
         },
-        restart_policy={'Name': 'no'},
+        restart_policy={'Name': 'unless-stopped'},
         detach=True,
     )
     return container
