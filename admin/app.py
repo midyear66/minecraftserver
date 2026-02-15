@@ -955,6 +955,25 @@ def get_server_by_port(port):
     return None, config
 
 
+def is_minecraft_uuid(input_str):
+    """Check if a string looks like a Minecraft UUID (with or without dashes)."""
+    import re
+    # UUID with dashes: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    uuid_with_dashes = re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', input_str)
+    # UUID without dashes: 32 hex characters
+    uuid_without_dashes = re.match(r'^[0-9a-fA-F]{32}$', input_str)
+    return bool(uuid_with_dashes or uuid_without_dashes)
+
+
+def format_uuid(uuid_str):
+    """Format a UUID string with dashes if not already formatted."""
+    # Remove existing dashes
+    raw = uuid_str.replace('-', '').lower()
+    if len(raw) != 32:
+        return None
+    return f'{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}'
+
+
 def lookup_mojang_uuid(username):
     """Look up a Minecraft player's UUID from the Mojang API."""
     try:
@@ -970,6 +989,25 @@ def lookup_mojang_uuid(username):
         return None, None
     except Exception as e:
         print(f"Mojang API error for {username}: {e}")
+        return None, None
+
+
+def lookup_mojang_username(uuid):
+    """Look up a Minecraft player's username from UUID via Mojang API."""
+    try:
+        # Ensure UUID is formatted correctly (without dashes for the API)
+        raw_uuid = uuid.replace('-', '')
+        resp = requests.get(
+            f'https://sessionserver.mojang.com/session/minecraft/profile/{raw_uuid}',
+            timeout=5
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            formatted_uuid = format_uuid(raw_uuid)
+            return formatted_uuid, data['name']
+        return None, None
+    except Exception as e:
+        print(f"Mojang API error for UUID {uuid}: {e}")
         return None, None
 
 
@@ -1850,29 +1888,38 @@ def add_player(port, list_name):
 
     container_name = server['container_name']
     status = get_container_status(container_name)
-    username = request.form.get('username', '').strip()
+    player_input = request.form.get('username', '').strip()
     reason = request.form.get('reason', 'Banned by admin').strip()
 
-    if not username:
-        flash('Username is required', 'error')
+    if not player_input:
+        flash('Player name or UUID is required', 'error')
         return redirect(url_for('players', port=port))
 
     list_cfg = PLAYER_LIST_CONFIG[list_name]
 
+    # Detect if input is a UUID or username
+    if is_minecraft_uuid(player_input):
+        uuid, canonical_name = lookup_mojang_username(player_input)
+        if not uuid:
+            flash(f'Could not find player with UUID "{player_input}" via Mojang API.', 'error')
+            return redirect(url_for('players', port=port))
+    else:
+        uuid, canonical_name = lookup_mojang_uuid(player_input)
+        if not uuid:
+            flash(f'Could not find player "{player_input}" via Mojang API. Check the spelling.', 'error')
+            return redirect(url_for('players', port=port))
+
     if status == 'running':
-        cmd = list_cfg['add_cmd'].format(name=username)
+        # Use the resolved username for server commands
+        cmd = list_cfg['add_cmd'].format(name=canonical_name)
         if list_name == 'banned' and reason:
-            cmd = f'ban {username} {reason}'
+            cmd = f'ban {canonical_name} {reason}'
         if send_mc_command(container_name, cmd):
             time.sleep(1)  # Wait for server to process command and update files
             flash(f'Sent command: {cmd}', 'success')
         else:
             flash('Failed to send command to server', 'error')
     else:
-        uuid, canonical_name = lookup_mojang_uuid(username)
-        if not uuid:
-            flash(f'Could not find player "{username}" via Mojang API. Check the spelling.', 'error')
-            return redirect(url_for('players', port=port))
 
         player_list = read_player_json(container_name, list_cfg['filename'])
 
