@@ -834,13 +834,7 @@ def create_mc_container(server_config):
         },
         labels={'managed_by': 'mc_manager'},
         restart_policy={'Name': 'no'},
-        healthcheck=docker.types.Healthcheck(
-            test=['CMD', 'mc-health'],
-            interval=10_000_000_000,       # 10s (nanoseconds)
-            timeout=5_000_000_000,          # 5s
-            start_period=120_000_000_000,   # 2m
-            retries=6,                      # ~60s before unhealthy
-        ),
+        healthcheck={'test': ['NONE']},  # Disable image healthcheck to prevent false unhealthy during shutdown
         detach=True,
         stdin_open=True,
         tty=True,
