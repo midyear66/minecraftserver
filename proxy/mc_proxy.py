@@ -92,6 +92,25 @@ class UsageLogger:
             'player_name': player_name
         })
 
+    def log_login_allowed(self, port: int, player_name: str, server_name: str = None):
+        """Log a player passing access checks"""
+        self._write_event({
+            'event': 'login_allowed',
+            'port': port,
+            'server_name': server_name,
+            'player_name': player_name
+        })
+
+    def log_login_denied(self, port: int, player_name: str, reason: str, server_name: str = None):
+        """Log a player being denied access"""
+        self._write_event({
+            'event': 'login_denied',
+            'port': port,
+            'server_name': server_name,
+            'player_name': player_name,
+            'reason': reason
+        })
+
 
 # Global usage logger
 usage_logger = UsageLogger()
@@ -730,14 +749,18 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         container_name = server_info.get('container_name', '')
         if is_player_banned(container_name, player_name):
             print(f"[Port {port}] Banned player '{player_name}' attempting to connect")
+            usage_logger.log_login_denied(port, player_name, 'banned', name)
             if notification_manager:
                 notification_manager.notify('unauthorized_login',
                     player=player_name, name=name or f'Port {port}', reason='banned')
         elif is_player_not_whitelisted(container_name, player_name):
             print(f"[Port {port}] Non-whitelisted player '{player_name}' attempting to connect")
+            usage_logger.log_login_denied(port, player_name, 'not whitelisted', name)
             if notification_manager:
                 notification_manager.notify('unauthorized_login',
                     player=player_name, name=name or f'Port {port}', reason='not whitelisted')
+        else:
+            usage_logger.log_login_allowed(port, player_name, name)
 
     try:
         # Check actual Docker status (in-memory state can be stale if

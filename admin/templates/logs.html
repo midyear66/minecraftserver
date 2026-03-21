@@ -61,6 +61,10 @@
                         Join
                         {% elif entry.event == 'player_leave' %}
                         Leave
+                        {% elif entry.event == 'login_allowed' %}
+                        Allowed
+                        {% elif entry.event == 'login_denied' %}
+                        Denied
                         {% else %}
                         {{ entry.event }}
                         {% endif %}
@@ -73,6 +77,8 @@
                     {% if entry.event in ['player_join', 'player_leave'] %}
                     {{ entry.players }} player{% if entry.players != 1 %}s{% endif %} online
                     {% elif entry.event == 'server_stop' and entry.reason %}
+                    {{ entry.reason | replace('_', ' ') | title }}
+                    {% elif entry.event == 'login_denied' and entry.reason %}
                     {{ entry.reason | replace('_', ' ') | title }}
                     {% endif %}
                 </td>
@@ -133,6 +139,16 @@
         color: #ffc107;
     }
 
+    .event-login_allowed {
+        background: #0a3622;
+        color: #28a745;
+    }
+
+    .event-login_denied {
+        background: #3a0a1a;
+        color: #e94560;
+    }
+
     .filter-checkboxes {
         display: flex;
         flex-wrap: wrap;
@@ -168,7 +184,9 @@
             'server_start': 'Start',
             'server_stop': 'Stop',
             'player_join': 'Join',
-            'player_leave': 'Leave'
+            'player_leave': 'Leave',
+            'login_allowed': 'Allowed',
+            'login_denied': 'Denied'
         };
         return eventMap[event] || event;
     }
@@ -178,6 +196,8 @@
             const s = entry.players !== 1 ? 's' : '';
             return `${entry.players} player${s} online`;
         } else if (entry.event === 'server_stop' && entry.reason) {
+            return entry.reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        } else if (entry.event === 'login_denied' && entry.reason) {
             return entry.reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         }
         return '';
