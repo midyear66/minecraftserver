@@ -13,6 +13,7 @@ A Docker-based platform for managing multiple Minecraft servers with a protocol-
 - **Mod/Plugin Management** -- Upload mods/plugins directly, or configure auto-download from Modrinth and SpigotMC. Schedule updates to run while servers are stopped to avoid startup delays.
 - **Scheduled Tasks** -- Automate version checks, server restarts, commands, broadcasts, and mod updates on custom schedules.
 - **Notifications** -- Pushover and email notifications for server start/stop, player join/leave, and unauthorized login attempts.
+- **Access Logging** -- Tracks player login access decisions (allowed or denied) with reasons (banned, not whitelisted) in the usage logs, viewable from the admin panel.
 - **Backup Management** -- Create, schedule, and restore server backups through the admin panel.
 - **Cross-Platform** -- Works on Linux, macOS (Docker Desktop), and Windows (WSL/Git Bash) with automatic platform detection and networking configuration.
 - **Crafty Controller Migration** -- Import existing servers from Crafty Controller using the included migration script.
