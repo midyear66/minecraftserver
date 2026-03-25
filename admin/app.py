@@ -749,7 +749,7 @@ def create_mc_container(server_config):
         'EULA': 'TRUE',
         'TYPE': server_type,
         'VERSION': server_config.get('version', 'LATEST'),
-        'MEMORY': server_config.get('memory', '2G'),
+        'MEMORY': server_config.get('memory', '4G'),
         'ENABLE_QUERY': 'false',
         'ENABLE_RCON': 'false',
     }
@@ -1155,7 +1155,7 @@ def dashboard():
             'internal_port': srv.get('internal_port'),
             'type': srv.get('type', 'VANILLA'),
             'version': srv.get('version', 'LATEST'),
-            'memory': srv.get('memory', '2G'),
+            'memory': srv.get('memory', '4G'),
             'running': status == 'running',
             'status': status,
             'bluemap_enabled': srv.get('bluemap_enabled', False),
@@ -1178,7 +1178,7 @@ def create_server():
     port = request.form.get('port', '').strip()
     server_type = request.form.get('type', 'VANILLA').upper()
     version = request.form.get('version', 'LATEST').strip()
-    memory = request.form.get('memory', '2G').strip()
+    memory = request.form.get('memory', '4G').strip()
     bluemap_enabled = request.form.get('bluemap_enabled') == '1'
     bluemap_caves = request.form.get('bluemap_caves') == '1'
 
@@ -1284,7 +1284,7 @@ def import_server():
     # Validate basic inputs
     name = request.form.get('name', '').strip()
     port = request.form.get('port', type=int)
-    memory = request.form.get('memory', '2G')
+    memory = request.form.get('memory', '4G')
     import_type = request.form.get('import_type', 'file')
     auto_start = request.form.get('auto_start') == '1'
 
@@ -1522,7 +1522,7 @@ def update_server(port):
     # Parse basic fields
     new_name = request.form.get('name', '').strip()
     new_version = request.form.get('version', 'LATEST').strip()
-    new_memory = request.form.get('memory', '2G')
+    new_memory = request.form.get('memory', '4G')
 
     if not new_name:
         flash('Server name is required', 'error')
@@ -1602,7 +1602,7 @@ def update_server(port):
     name_changed = new_name != server_entry.get('name', '')
     needs_recreation = (
         new_version != server_entry.get('version', 'LATEST') or
-        new_memory != server_entry.get('memory', '2G') or
+        new_memory != server_entry.get('memory', '4G') or
         new_env != old_env or
         bluemap_changed
     )
