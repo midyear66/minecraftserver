@@ -247,7 +247,7 @@ BLUEMAP_STANDALONE_TYPES = {'VANILLA', 'FORGE', 'FABRIC'}
 BLUEMAP_SUPPORTED_TYPES = BLUEMAP_PLUGIN_TYPES | BLUEMAP_STANDALONE_TYPES
 
 # BlueMap standalone Docker image
-BLUEMAP_STANDALONE_IMAGE = 'ghcr.io/bluemap-minecraft/bluemap:latest'
+BLUEMAP_STANDALONE_IMAGE = 'ghcr.io/bluemap-minecraft/bluemap:v5'
 
 
 def get_bluemap_container_name(server_container_name):
@@ -448,17 +448,20 @@ def create_bluemap_standalone_container(server_config):
     return container
 
 
-def start_bluemap_standalone(server_container_name):
-    """Start the standalone BlueMap container for a server"""
+def start_bluemap_standalone(server_config):
+    """Start the standalone BlueMap container for a server, creating it if missing"""
+    server_container_name = server_config['container_name']
+    bluemap_container_name = get_bluemap_container_name(server_container_name)
     try:
         client = get_docker_client()
-        bluemap_container_name = get_bluemap_container_name(server_container_name)
-        container = client.containers.get(bluemap_container_name)
+        try:
+            container = client.containers.get(bluemap_container_name)
+        except docker.errors.NotFound:
+            print(f"BlueMap container {bluemap_container_name} missing; recreating...")
+            container = create_bluemap_standalone_container(server_config)
         if container.status != 'running':
             container.start()
         return True
-    except docker.errors.NotFound:
-        return False
     except Exception as e:
         print(f"Error starting BlueMap container {bluemap_container_name}: {e}")
         return False
@@ -1448,7 +1451,7 @@ def start_server(port):
                 set_manual_start_flag(port, True)
                 # Start BlueMap standalone container if applicable
                 if srv.get('bluemap_enabled') and srv.get('type') in BLUEMAP_STANDALONE_TYPES:
-                    start_bluemap_standalone(srv['container_name'])
+                    start_bluemap_standalone(srv)
             else:
                 flash(f'Failed to start server "{srv["name"]}"', 'error')
             return redirect(url_for('dashboard'))
