@@ -468,15 +468,15 @@ class DockerManager:
     def wait_for_server_ready(self, port: int, timeout: int = 120) -> bool:
         """Wait for server to be ready to accept connections.
 
-        Uses Docker health check status from itzg/minecraft-server if
-        available, falling back to a TCP connection check for images
-        without a health check.
+        Runs `mc-health` inside the container (provided by itzg/minecraft-server)
+        which returns 0 only once the Minecraft server is actually accepting
+        player connections. This is more reliable than a TCP probe, which
+        succeeds against Docker's port forwarder before MC has bound its port.
         """
         server = self.get_server_by_port(port)
         if not server:
             return False
 
-        internal_port = int(server['internal_port'])
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
@@ -485,25 +485,9 @@ class DockerManager:
                     time.sleep(2)
                     continue
 
-                # Check Docker health check status (itzg/minecraft-server
-                # reports 'healthy' when the MC server is truly ready)
-                health = container.attrs.get('State', {}).get('Health', {}).get('Status', '')
-                if health == 'healthy':
+                exec_result = container.exec_run(['mc-health'])
+                if exec_result.exit_code == 0:
                     return True
-                if health in ('starting', 'unhealthy'):
-                    # Health check exists but not passing yet — keep waiting
-                    time.sleep(2)
-                    continue
-
-                # No health check configured — fall back to TCP probe
-                try:
-                    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    test_sock.settimeout(2)
-                    test_sock.connect((BACKEND_HOST, internal_port))
-                    test_sock.close()
-                    return True
-                except:
-                    pass
             except:
                 pass
             time.sleep(2)
