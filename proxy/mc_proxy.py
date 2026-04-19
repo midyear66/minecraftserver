@@ -15,6 +15,7 @@ import time
 import os
 from datetime import datetime
 import docker
+import requests
 from typing import Optional, Tuple
 from notifications import NotificationManager
 
@@ -234,6 +235,28 @@ def is_player_not_whitelisted(container_name: str, player_name: str) -> bool:
             return not any(p.get('name', '').lower() == player_name.lower() for p in whitelist)
     except (FileNotFoundError, json.JSONDecodeError):
         return False
+
+
+# ============== Mojang Account Verification ==============
+
+MOJANG_API_URL = "https://api.mojang.com/users/profiles/minecraft/"
+
+def verify_mojang_account(username: str) -> bool:
+    """Check if a username corresponds to a real Mojang/Microsoft account.
+    Returns True if the account exists or if the API is unreachable (fail-open).
+    Returns False only if the API confirms the account does not exist."""
+    try:
+        resp = requests.get(f"{MOJANG_API_URL}{username}", timeout=5)
+        if resp.status_code == 200:
+            return True
+        if resp.status_code in (204, 404):
+            return False
+        # Unexpected status - fail open
+        print(f"Mojang API returned unexpected status {resp.status_code} for '{username}'")
+        return True
+    except requests.RequestException as e:
+        print(f"Mojang API unreachable: {e} - allowing '{username}' through")
+        return True
 
 
 # ============== Minecraft Protocol Helpers ==============
@@ -723,6 +746,20 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         print(f"[Port {port}] Rejected login with empty player name (likely scanner)")
         try:
             client.sendall(build_disconnect_packet("Invalid username"))
+            client.close()
+        except:
+            pass
+        return
+
+    # Verify account exists with Mojang before waking the server
+    if not verify_mojang_account(player_name):
+        print(f"[Port {port}] Rejected '{player_name}' - not a valid Mojang account")
+        usage_logger.log_login_denied(port, player_name, 'invalid account', name)
+        if notification_manager:
+            notification_manager.notify('unauthorized_login',
+                player=player_name, name=name or f'Port {port}', reason='invalid account')
+        try:
+            client.sendall(build_disconnect_packet("Account not recognized. Please use a legitimate Minecraft account."))
             client.close()
         except:
             pass
