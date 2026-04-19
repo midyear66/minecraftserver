@@ -755,6 +755,7 @@ def create_mc_container(server_config):
         'MEMORY': server_config.get('memory', '4G'),
         'ENABLE_QUERY': 'false',
         'ENABLE_RCON': 'false',
+        'ONLINE_MODE': 'true',
     }
 
     # BlueMap support
