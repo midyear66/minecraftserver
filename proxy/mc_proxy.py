@@ -768,6 +768,21 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
             pass
         return
 
+    # Whitelist check - also a cheap local read, rejects before waking
+    # the server or calling the Mojang API
+    if is_player_not_whitelisted(container_name, player_name):
+        print(f"[Port {port}] Non-whitelisted player '{player_name}' attempting to connect")
+        usage_logger.log_login_denied(port, player_name, 'not whitelisted', name)
+        if notification_manager:
+            notification_manager.notify('unauthorized_login',
+                player=player_name, name=name or f'Port {port}', reason='not whitelisted')
+        try:
+            client.sendall(build_disconnect_packet("You are not whitelisted on this server."))
+            client.close()
+        except:
+            pass
+        return
+
     # Verify account exists with Mojang before waking the server
     if not verify_mojang_account(player_name):
         print(f"[Port {port}] Rejected '{player_name}' - not a valid Mojang account")
@@ -782,15 +797,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
             pass
         return
 
-    # Whitelist check (notify only, server enforces)
-    if is_player_not_whitelisted(container_name, player_name):
-        print(f"[Port {port}] Non-whitelisted player '{player_name}' attempting to connect")
-        usage_logger.log_login_denied(port, player_name, 'not whitelisted', name)
-        if notification_manager:
-            notification_manager.notify('unauthorized_login',
-                player=player_name, name=name or f'Port {port}', reason='not whitelisted')
-    else:
-        usage_logger.log_login_allowed(port, player_name, name)
+    usage_logger.log_login_allowed(port, player_name, name)
 
     try:
         # Check actual Docker status (in-memory state can be stale if

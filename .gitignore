@@ -36,3 +36,6 @@ Thumbs.db
 
 # Claude workspace
 .claude/
+
+# Admin log (local notes)
+ADMIN_LOG.md
