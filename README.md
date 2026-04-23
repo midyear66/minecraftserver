@@ -12,8 +12,9 @@ A Docker-based platform for managing multiple Minecraft servers with a protocol-
 - **Server Import** -- Import existing servers from ZIP/tar.gz archives or local directories. Auto-detects server type and version from JAR files and directory structure.
 - **Mod/Plugin Management** -- Upload mods/plugins directly, or configure auto-download from Modrinth and SpigotMC. Schedule updates to run while servers are stopped to avoid startup delays.
 - **Scheduled Tasks** -- Automate version checks, server restarts, commands, broadcasts, and mod updates on custom schedules.
-- **Notifications** -- Pushover and email notifications for server start/stop, player join/leave, and unauthorized login attempts.
+- **Notifications** -- Pushover and email notifications for server start/stop, player join/leave, unauthorized login attempts, and auto-ban events.
 - **Mojang Account Verification** -- The proxy verifies player accounts against the Mojang API before forwarding connections. Banned players, non-whitelisted players (when the whitelist is enabled), and invalid accounts are rejected at the proxy without waking sleeping servers.
+- **Bot Auto-Ban** -- Players that connect and disconnect within one second (a pattern consistent with automated probes) are automatically banned across every configured server. Whitelisted players are exempt, and detection can be toggled per server from the admin panel.
 - **Access Logging** -- Tracks player login access decisions (allowed or denied) with reasons (banned, not whitelisted, invalid account) in the usage logs, viewable from the admin panel.
 - **Backup Management** -- Create, schedule, and restore server backups through the admin panel.
 - **Cross-Platform** -- Works on Linux, macOS (Docker Desktop), and Windows (WSL/Git Bash) with automatic platform detection and networking configuration.

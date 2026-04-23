@@ -35,6 +35,10 @@ MESSAGE_TEMPLATES = {
     'unauthorized_login': {
         'subject': '[MC] Unauthorized Login Attempt: {player}',
         'body': '{player} tried to join "{name}" but is {reason}'
+    },
+    'auto_ban': {
+        'subject': '[MC] Auto-Ban Triggered: {player}',
+        'body': '{player} auto-banned on all servers after rapid connect/disconnect ({duration_ms}ms on "{name}")'
     }
 }
 
@@ -271,7 +275,8 @@ DEFAULT_NOTIFICATIONS_CONFIG = {
             'server_stop': True,
             'player_join': False,
             'player_leave': False,
-            'unauthorized_login': False
+            'unauthorized_login': False,
+            'auto_ban': True
         }
     },
     'pushover': {
@@ -284,7 +289,8 @@ DEFAULT_NOTIFICATIONS_CONFIG = {
             'server_stop': True,
             'player_join': False,
             'player_leave': False,
-            'unauthorized_login': False
+            'unauthorized_login': False,
+            'auto_ban': True
         }
     }
 }

@@ -80,9 +80,17 @@ INTEGER_ENV_VARS = {'MAX_PLAYERS', 'SPAWN_PROTECTION', 'VIEW_DISTANCE'}
 
 def get_default_config():
     """Return the default configuration structure"""
+    import secrets
     return {
         'timeout': 5,
         'auto_shutdown': True,
+        'auto_ban': {
+            'enabled': True,
+            'threshold_seconds': 1.0,
+            'exempt_whitelisted': True,
+            'admin_url': 'http://127.0.0.1:8080/api/auto-ban',
+            'token': secrets.token_urlsafe(32),
+        },
         'servers': [],
         'scheduled_tasks': [],
         'notifications': {
@@ -100,7 +108,8 @@ def get_default_config():
                     'server_stop': True,
                     'player_join': False,
                     'player_leave': False,
-                    'unauthorized_login': False
+                    'unauthorized_login': False,
+                    'auto_ban': True
                 }
             },
             'pushover': {
@@ -113,7 +122,8 @@ def get_default_config():
                     'server_stop': True,
                     'player_join': False,
                     'player_leave': False,
-                    'unauthorized_login': False
+                    'unauthorized_login': False,
+                    'auto_ban': True
                 }
             }
         }
@@ -1869,6 +1879,7 @@ def players(port):
 
     wl_enabled = read_server_property(container_name, 'white-list')
     whitelist_enabled = (wl_enabled == 'true') if wl_enabled else False
+    auto_ban_enabled = bool(server.get('auto_ban', True))
 
     return render_template('players.html',
                          server=server,
@@ -1876,7 +1887,8 @@ def players(port):
                          whitelist=whitelist,
                          banned=banned,
                          ops=ops,
-                         whitelist_enabled=whitelist_enabled)
+                         whitelist_enabled=whitelist_enabled,
+                         auto_ban_enabled=auto_ban_enabled)
 
 
 @app.route('/servers/<int:port>/players/<list_name>/add', methods=['POST'])
@@ -2006,6 +2018,123 @@ def remove_player(port, list_name):
             flash(f'Removed "{username}" from {list_name} list', 'success')
         else:
             flash(f'Failed to write {list_cfg["filename"]}', 'error')
+
+    return redirect(url_for('players', port=port))
+
+
+@app.route('/api/auto-ban', methods=['POST'])
+@csrf.exempt
+def api_auto_ban():
+    """Cross-server auto-ban endpoint. Called by the proxy when a bot-like
+    rapid connect/disconnect is detected. Requires a shared token from
+    config.json (auto_ban.token) in the X-Auto-Ban-Token header.
+
+    Request body: {"name": str, "reason": str (optional)}
+    For each configured server:
+      - running: sends /ban command
+      - stopped: appends to banned-players.json (needs UUID from Mojang)
+    """
+    config = load_config()
+    expected_token = (config.get('auto_ban') or {}).get('token') or ''
+    provided_token = request.headers.get('X-Auto-Ban-Token', '')
+    if not expected_token or provided_token != expected_token:
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get('name') or '').strip()
+    reason = (payload.get('reason') or 'auto-ban: rapid connect/disconnect').strip()
+
+    if not name:
+        return jsonify({'error': 'name required'}), 400
+
+    # Resolve canonical name + UUID via Mojang. If this fails, we can still
+    # ban on running servers via /ban command but cannot write a proper
+    # banned-players.json entry for stopped servers.
+    uuid, canonical_name = lookup_mojang_uuid(name)
+    if not canonical_name:
+        canonical_name = name
+
+    from datetime import datetime as _dt
+    entry_template = {
+        'uuid': uuid,
+        'name': canonical_name,
+        'created': _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S +0000'),
+        'source': 'auto-ban',
+        'reason': reason,
+        'expires': 'forever',
+    }
+
+    results = []
+    for srv in config.get('servers', []):
+        container_name = srv.get('container_name', '')
+        port = srv.get('external_port')
+        if not container_name:
+            continue
+
+        status = get_container_status(container_name)
+        result = {'port': port, 'container': container_name, 'status': status}
+
+        try:
+            if status == 'running':
+                cmd = f'ban {canonical_name} {reason}'
+                ok = send_mc_command(container_name, cmd)
+                result['method'] = 'command'
+                result['success'] = ok
+            else:
+                if not uuid:
+                    result['method'] = 'file'
+                    result['success'] = False
+                    result['error'] = 'UUID unavailable; cannot write ban entry'
+                else:
+                    player_list = read_player_json(container_name, 'banned-players.json')
+                    if any(p.get('name', '').lower() == canonical_name.lower() for p in player_list):
+                        result['method'] = 'file'
+                        result['success'] = True
+                        result['already_banned'] = True
+                    else:
+                        player_list.append(dict(entry_template))
+                        ok = write_player_json(container_name, 'banned-players.json', player_list)
+                        result['method'] = 'file'
+                        result['success'] = ok
+        except Exception as e:
+            result['success'] = False
+            result['error'] = str(e)
+
+        results.append(result)
+
+    print(f"[auto-ban] {canonical_name} (uuid={uuid}) reason='{reason}' -> {results}")
+
+    return jsonify({
+        'name': canonical_name,
+        'uuid': uuid,
+        'reason': reason,
+        'results': results,
+    })
+
+
+@app.route('/servers/<int:port>/auto-ban/toggle', methods=['POST'])
+@login_required
+def toggle_auto_ban(port):
+    """Flip the per-server auto_ban flag in config.json. Defaults to True
+    when the key is missing, so the first toggle turns it OFF."""
+    config = load_config()
+    target = None
+    for srv in config.get('servers', []):
+        if int(srv.get('external_port', 0)) == port:
+            target = srv
+            break
+    if not target:
+        flash(f'No server found on port {port}', 'error')
+        return redirect(url_for('dashboard'))
+
+    current = bool(target.get('auto_ban', True))
+    target['auto_ban'] = not current
+
+    try:
+        save_config(config)
+        flash(f'Auto-ban {"enabled" if target["auto_ban"] else "disabled"} for this server', 'success')
+    except Exception as e:
+        flash(f'Failed to save config: {e}', 'error')
 
     return redirect(url_for('players', port=port))
 
