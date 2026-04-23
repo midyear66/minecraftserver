@@ -65,6 +65,8 @@
                         Allowed
                         {% elif entry.event == 'login_denied' %}
                         Denied
+                        {% elif entry.event == 'auto_ban_triggered' %}
+                        Auto-Ban
                         {% else %}
                         {{ entry.event }}
                         {% endif %}
@@ -80,6 +82,8 @@
                     {{ entry.reason | replace('_', ' ') | title }}
                     {% elif entry.event == 'login_denied' and entry.reason %}
                     {{ entry.reason | replace('_', ' ') | title }}
+                    {% elif entry.event == 'auto_ban_triggered' %}
+                    Disconnected in {{ entry.duration_ms }}ms
                     {% endif %}
                 </td>
             </tr>
@@ -149,6 +153,11 @@
         color: #e94560;
     }
 
+    .event-auto_ban_triggered {
+        background: #3a0a1a;
+        color: #ff6b81;
+    }
+
     .filter-checkboxes {
         display: flex;
         flex-wrap: wrap;
@@ -186,7 +195,8 @@
             'player_join': 'Join',
             'player_leave': 'Leave',
             'login_allowed': 'Allowed',
-            'login_denied': 'Denied'
+            'login_denied': 'Denied',
+            'auto_ban_triggered': 'Auto-Ban'
         };
         return eventMap[event] || event;
     }
@@ -199,6 +209,8 @@
             return entry.reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         } else if (entry.event === 'login_denied' && entry.reason) {
             return entry.reason.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        } else if (entry.event === 'auto_ban_triggered') {
+            return `Disconnected in ${entry.duration_ms}ms`;
         }
         return '';
     }
