@@ -112,6 +112,16 @@ class UsageLogger:
             'reason': reason
         })
 
+    def log_auto_ban(self, port: int, player_name: str, duration_ms: int, server_name: str = None):
+        """Log an auto-ban trigger (rapid connect/disconnect)"""
+        self._write_event({
+            'event': 'auto_ban_triggered',
+            'port': port,
+            'server_name': server_name,
+            'player_name': player_name,
+            'duration_ms': duration_ms
+        })
+
 
 # Global usage logger
 usage_logger = UsageLogger()
@@ -235,6 +245,58 @@ def is_player_not_whitelisted(container_name: str, player_name: str) -> bool:
             return not any(p.get('name', '').lower() == player_name.lower() for p in whitelist)
     except (FileNotFoundError, json.JSONDecodeError):
         return False
+
+
+def is_player_whitelisted_on_any_server(config: dict, player_name: str) -> bool:
+    """Check if the player is on any server's whitelist.json. Used to exempt
+    known players from auto-ban so a flaky connection can't lock them out."""
+    for srv in config.get('servers', []):
+        container_name = srv.get('container_name', '')
+        if not container_name:
+            continue
+        wl_path = os.path.join(MC_DATA_DIR, container_name, 'whitelist.json')
+        try:
+            with open(wl_path, 'r') as f:
+                whitelist = json.load(f)
+                if any(p.get('name', '').lower() == player_name.lower() for p in whitelist):
+                    return True
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+    return False
+
+
+def trigger_auto_ban(config: dict, port: int, player_name: str, duration_ms: int, server_name: str):
+    """Fire-and-forget call to the admin service to ban this player on all
+    servers. Also logs a usage event and sends a notification."""
+    ab_cfg = config.get('auto_ban', {}) or {}
+    url = ab_cfg.get('admin_url')
+    token = ab_cfg.get('token')
+    reason = f'auto-ban: rapid connect/disconnect ({duration_ms}ms)'
+
+    usage_logger.log_auto_ban(port, player_name, duration_ms, server_name)
+    if notification_manager:
+        notification_manager.notify('auto_ban',
+            player=player_name, name=server_name or f'Port {port}', duration_ms=duration_ms)
+
+    if not url or not token:
+        print(f"[auto-ban] admin_url or token missing; skipping API call for '{player_name}'")
+        return
+
+    def _do():
+        try:
+            resp = requests.post(
+                url,
+                json={'name': player_name, 'reason': reason},
+                headers={'X-Auto-Ban-Token': token},
+                timeout=10,
+            )
+            print(f"[auto-ban] POST {url} for '{player_name}' -> {resp.status_code}")
+        except Exception as e:
+            print(f"[auto-ban] POST {url} failed: {e}")
+
+    t = threading.Thread(target=_do)
+    t.daemon = True
+    t.start()
 
 
 # ============== Mojang Account Verification ==============
@@ -868,6 +930,7 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
         server.sendall(handshake_raw + login_raw)
 
         # Track this connection
+        connect_ts = time.time()
         increment_connections(port, docker_mgr, player_name)
 
         try:
@@ -879,6 +942,21 @@ def handle_login_request(client: socket.socket, handshake: dict, handshake_raw: 
                 server.close()
             except:
                 pass
+
+            # Auto-ban check: bot probes typically connect and disconnect
+            # within a fraction of a second. Whitelisted players are exempt.
+            # Per-server opt-out: server_info['auto_ban'] == False skips detection.
+            ab_cfg = config.get('auto_ban', {}) or {}
+            if ab_cfg.get('enabled') and server_info.get('auto_ban', True):
+                duration = time.time() - connect_ts
+                threshold = float(ab_cfg.get('threshold_seconds', 1.0))
+                if duration < threshold:
+                    exempt = (ab_cfg.get('exempt_whitelisted', True)
+                              and is_player_whitelisted_on_any_server(config, player_name))
+                    if not exempt:
+                        duration_ms = int(duration * 1000)
+                        print(f"[Port {port}] AUTO-BAN: '{player_name}' disconnected in {duration_ms}ms")
+                        trigger_auto_ban(config, port, player_name, duration_ms, name)
 
     except Exception as e:
         print(f"[Port {port}] Error handling login: {e}")

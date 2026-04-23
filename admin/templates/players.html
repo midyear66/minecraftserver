@@ -79,7 +79,22 @@
 
 <!-- Banned Players -->
 <div class="card">
-    <h2>Banned Players</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin-bottom: 0;">Banned Players</h2>
+        <form method="POST" action="{{ url_for('toggle_auto_ban', port=server.external_port) }}" style="display: flex; align-items: center; gap: 0.75rem;">
+            <span style="color: #aaa; font-size: 0.9rem;">
+                Auto-ban:
+                {% if auto_ban_enabled %}
+                <span style="color: #28a745;">Enabled</span>
+                {% else %}
+                <span style="color: #dc3545;">Disabled</span>
+                {% endif %}
+            </span>
+            <button type="submit" class="btn btn-sm {% if auto_ban_enabled %}btn-danger{% else %}btn-success{% endif %}">
+                {% if auto_ban_enabled %}Disable{% else %}Enable{% endif %}
+            </button>
+        </form>
+    </div>
 
     {% if banned %}
     <table>
